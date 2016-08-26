@@ -89,19 +89,53 @@ if [[ -z "$FILENAMES" ]] ; then
     usage "Not enough arguments"
 fi
 
-#cat <<EOF
-#FILENAMES=$FILENAMES
-#REF=$REF_EPI
-#DUR_TR=$DUR_TR
-#TOTAL_TR=$TOTAL_TR
-#PRE_TR=$PRE_TR
-#TIME_FILE=$TIME_FILE
-#DIFF_MAT=$DIFF_MAT
-#PAD_AP=$PAD_AP
-#PAD_DV=$PAD_DV
-#EOF
+rm temp*+orig*
 
-for FILENAME in "${FILENAMES[@]}" ; do
-    echo "'$FILENAME'"
+for TEMPFILE in "${FILENAMES[@]}"; do
+    if [[ "$TEMPFILE" == *nii.gz ]]; then
+        INPUTFILE=${TEMPFILE%.nii.gz}
+        SUFFIX='.nii.gz'
+    elif [[ "$TEMPFILE" == *nii ]]; then
+        INPUTFILE=${TEMPFILE%.nii}
+        SUFFIX='.nii'
+    elif [[ "$TEMPFILE" == *orig* ]]; then
+        INPUTFILE=${TEMPFILE%+*}
+        SUFFIX='+orig'
+    else
+        INPUTFILE=${TEMPFILE}
+        SUFFIX='.nii.gz'
+    fi
+    if [[ -z "${NUM_TR}" ]]; then
+        3dTcat -prefix temp+orig ${INPUTFILE}${SUFFIX}'''['${PRE_TR}'..$]'''
+    else
+        3dTcat -prefix temp+orig ${INPUTFILE}${SUFFIX}'''['${PRE_TR}'..'${NUM_TR}']'''
+    fi
+
+    if [ "${TIME_FILE}" == false ]; then
+        3dTshift -quintic -prefix temp.ts+orig \
+            -TR ${TR}s -tzero 0 -tpattern alt+z \
+             temp+orig
+    else
+        3dTshift -tzero 0 -quintic -prefix temp.ts+orig \
+            -TR ${TR}s -tpattern @${TIME_FILE} \
+             temp+orig
+    fi
+
+    3dWarp -deoblique -prefix temp.ts.do+orig temp.ts+orig 
+
+    if [[ -n "${PAD_AP}" ]]; then 
+        3dZeropad -A ${PAD_AP} -P ${PAD_AP} -prefix temp.ts.do.pad+orig temp.ts.do+orig
+        rm temp.ts.do+orig*
+        3dcopy temp.ts.do.pad+orig temp.ts.do+orig
+    fi
+
+    if [ "${DIFF_MAT}" == true ] # if different matrices
+    then
+        @Align_Centers -base ${REF_EPI} -dset temp.ts.do+orig
+        3dresample -master ${REF_EPI} -prefix temp.ts.do.rs+orig -inset temp.ts.do_shft+orig
+        3dAFNItoNIFTI -prefix ${INPUTFILE}.ts.do.rs.nii.gz temp.ts.do.rs+orig
+    else
+        3dAFNItoNIFTI -prefix ${INPUTFILE}.ts.do.nii.gz temp.ts.do+orig
+    fi
+    rm temp*+orig*
 done
-
