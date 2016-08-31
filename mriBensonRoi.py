@@ -8,6 +8,8 @@ def main(args, loglevel):
     #logging.info("You passed an argument.")
     #logging.debug("Your Argument: %s" % args.file_names)
     
+    # get current directory    
+    curdir = os.getcwd()
 
     for sub in args.subjects: # loop over list of subjects
 
@@ -28,7 +30,6 @@ def main(args, loglevel):
             outdir = "{0}_{1}".format(args.outdir,sub) # force sub in name, in case multiple subjects
     
         # make temporary, local folder
-        curdir = os.getcwd()
         tmpdir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))
         # and subfoldes
         os.mkdir(tmpdir+"/surf")
@@ -90,13 +91,15 @@ def main(args, loglevel):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
-        "############################################################\n"
-        "Script for generating V1-V3 ROIs in subject's native space,\n" 
+        "#############################################################\n"
+        "Script for generating V1-V3 ROIs in subject's native space,  \n" 
         "predicted from the cortical surface anatomy\n"
         "as described in Benson et al. (PLoS Comput Biol., 2014).\n"
         "Requires template data, which can be downloaded at:\n"
         "https://cfn.upenn.edu/aguirre/wiki/public:retinotopy_template\n"
-        "############################################################"
+        "\n"
+        "Author: pjkohler, Stanford University, 2016                  \n"
+        "#############################################################\n"
         ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
     parser.add_argument(
         "subjects",type=str,nargs="+", help="One or more subject IDs (without '_fs4')") 

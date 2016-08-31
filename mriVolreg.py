@@ -49,11 +49,13 @@ def main(args, loglevel):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
-        "############################################################\n"
+        "#############################################################\n"
         "Script for second stage of preprocessing: Volume registation.\n"
         "Typically run following mriPre.py\n"
         "See option --slow for difficult cases \n"
-        "############################################################"
+        "\n"
+        "Author: pjkohler, Stanford University, 2016                  \n"
+        "#############################################################\n"
         ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
     parser.add_argument("infiles",
         type=str,

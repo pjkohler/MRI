@@ -8,6 +8,9 @@ def main(args, loglevel):
     #logging.info("You passed an argument.")
     #logging.debug("Your Argument: %s" % args.file_names)
     
+    # get current directory    
+    curdir = os.getcwd()
+    
     for sub in args.subjects: # loop over list of subjects
     
         # check if subjects' freesurfer directory exists
@@ -27,7 +30,6 @@ def main(args, loglevel):
             outdir = "{0}_{1}".format(args.outdir,sub) # force sub in name, in case multiple subjects
     
         # make temporary, local folder
-        curdir = os.getcwd()
         tmpdir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))
         # and subfoldes
         os.mkdir(tmpdir+"/surf")
@@ -67,14 +69,16 @@ def main(args, loglevel):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
-        "############################################################\n"
+        "#############################################################\n"
         "Script for converting atlas ROIs from freesurfers's fsaverage\n"
         "into subjects' native surface space. \n"
         "Current implementation uses ROIs atlas from Glasser et al. \n"
         "(Nature, 2016).\n"
         "Requires atlas template, which can be downloaded at:\n"
         "https://balsa.wustl.edu/study/show/RVVG\n"
-        "############################################################"
+        "\n"
+        "Author: pjkohler, Stanford University, 2016                  \n"
+        "#############################################################\n"
         ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
     parser.add_argument(
         "subjects",type=str,nargs="+", help="One or more subject IDs (without '_fs4')") 

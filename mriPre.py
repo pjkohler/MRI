@@ -77,13 +77,15 @@ def main(args, loglevel):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
-        "############################################################\n"
+        "###########################################################\n"
         "Script for first stage of preprocessing\n"
         "Slice-time correction and deobliqueing, in that order.\n"
         "Also supports data with different number of slices,\n"
         "and padding of the matrices, via flags \n"
         "--diffmat, --pad_ap and --pad_is. \n"
-        "############################################################"
+        "\n"
+        "Author: pjkohler, Stanford University, 2016                \n"
+        "###########################################################\n"
         ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
     parser.add_argument(
         "infiles",type=str,

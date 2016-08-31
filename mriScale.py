@@ -50,12 +50,14 @@ def main(args, loglevel):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
-        "############################################################\n"
+        "################################################################\n"
         "Script for third stage of preprocessing: Scaling and Detrending.\n"
         "Typically run following mriPre.py and mriVolreg.py \n"
         "Detrending currently requires motion registration parameters\n"
         "as .1D files: motparam.xxx.1D \n"
-        "############################################################"
+        "\n"
+        "Author: pjkohler, Stanford University, 2016                 \n"
+        "################################################################\n"
         ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
     parser.add_argument(
         "infiles",type=str,
