@@ -48,17 +48,25 @@ def main(args, loglevel):
         shutil.rmtree(tmpdir) 
       
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=
+        " \n"
+        "############################################################\n"
+        "Script for third stage of preprocessing: Scaling and Detrending.\n"
+        "Typically run following mriPre.py and mriVolreg.py \n"
+        "Detrending currently requires motion registration parameters\n"
+        "as .1D files: motparam.xxx.1D \n"
+        "############################################################"
+        ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
     parser.add_argument(
         "infiles",type=str,
         nargs="+", help="List of EPI files") 
     parser.add_argument("-v", "--verbose", action="store_true",
         help="increase output verbosity")    
     parser.add_argument(
-        "--no_dt", help="Skip detrend (default: off)",
+        "--no_dt", help="Skip detrend \n(default: off)",
         action="store_true")    
     parser.add_argument(
-        "--keeptemp", help="Keep temporary folder (default: off)",
+        "--keeptemp", help="Keep temporary folder \n(default: off)",
         action="store_true")
 
     args = parser.parse_args()

@@ -47,7 +47,14 @@ def main(args, loglevel):
         shutil.rmtree(tmpdir) 
       
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=
+        " \n"
+        "############################################################\n"
+        "Script for second stage of preprocessing: Volume registation.\n"
+        "Typically run following mriPre.py\n"
+        "See option --slow for difficult cases \n"
+        "############################################################"
+        ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
     parser.add_argument("infiles",
         type=str,
         nargs="+", help="List of EPI files") 
@@ -55,12 +62,12 @@ if __name__ == "__main__":
         help="increase output verbosity")    
     parser.add_argument(
         "--ref", metavar="str", type=str,default="last",
-         nargs="?", help="Name of reference EPI to align to (default: last given)")    
+         nargs="?", help="Name of reference EPI to align to \n(default: last given)")    
     parser.add_argument(
-        "--slow", help="Do slow volume registration (difficult files)? (default: no)",
+        "--slow", help="Do slow volume registration (difficult files)? \n(default: no)",
         action="store_true")
     parser.add_argument(
-        "--keeptemp", help="Keep temporary folder? (default: off)",
+        "--keeptemp", help="Keep temporary folder? \n(default: off)",
         action="store_true")
 
     args = parser.parse_args()
