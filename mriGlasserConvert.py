@@ -30,7 +30,7 @@ def main(args, loglevel):
         for file in glob.glob(surfdir+"/*h.white"):
             shutil.copy(file,tmpdir+"/surf")
             
-            os.chdir(tmpdir)
+        os.chdir(tmpdir)
 
         for hemi in ["lh","rh"]:
             # convert from .annot to mgz
