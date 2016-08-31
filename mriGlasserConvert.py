@@ -13,48 +13,48 @@ def main(args, loglevel):
         suffix=""
     else:
         suffix="_fs4"
+    for sub in args.subjects: # loop over list of subjects
         
-    if args.outdir in "standard":
-        args.outdir = "{0}/{1}{2}/{3}".format(args.fsdir,args.subject,suffix,args.outname)
+        if args.outdir in "standard":
+            args.outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
     
-    # make temporary, local folder
-    curdir = os.getcwd()
-    tmpdir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))
-    # and subfoldes
-    os.mkdir(tmpdir+"/surf")
-    os.mkdir(tmpdir+"/"+args.outname)
-    
-    # copy relevant freesurfer files
-    surfdir = "{0}/{1}{2}/surf".format(args.fsdir,args.subject,suffix)
-    for file in glob.glob(surfdir+"/*h.white"):
-        shutil.copy(file,tmpdir+"/surf")
-
+        # make temporary, local folder
+        curdir = os.getcwd()
+        tmpdir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))
+        # and subfoldes
+        os.mkdir(tmpdir+"/surf")
+        os.mkdir(tmpdir+"/"+args.outname)
+        
+        # copy relevant freesurfer files
+        surfdir = "{0}/{1}{2}/surf".format(args.fsdir,sub,suffix)
+        for file in glob.glob(surfdir+"/*h.white"):
+            shutil.copy(file,tmpdir+"/surf")
             
-    os.chdir(tmpdir)
+            os.chdir(tmpdir)
 
-    for hemi in ["lh","rh"]:
-        # convert from .annot to mgz
-        subprocess.call("mri_annotation2label --subject fsaverage --hemi {0} --annotation {1}/{0}.HCPMMP1.annot --seg {0}.glassertemp1.mgz"
-            .format(hemi,args.atlasdir), shell=True)
-        # convert to subjects native space
-        subprocess.call("mri_surf2surf --srcsubject fsaverage --trgsubject {2}{3} --sval {0}.glassertemp1.mgz --hemi {0} --tval ./{1}/{0}.{1}.mgz"
-            .format(hemi,args.outname,args.subject,suffix), shell=True)
-        # convert mgz to gii
-        subprocess.call("mris_convert -f ./{1}/{0}.{1}.mgz ./surf/{0}.white ./{1}/{0}.{1}.gii"
-            .format(hemi,args.outname), shell=True)
-        # convert gii to niml.dset
-        subprocess.call("ConvertDset -o_niml_asc -input ./{1}/{0}.{1}.gii -prefix ./{1}/{0}.{1}.niml.dset"
-            .format(hemi,args.outname), shell=True)
+        for hemi in ["lh","rh"]:
+            # convert from .annot to mgz
+            subprocess.call("mri_annotation2label --subject fsaverage --hemi {0} --annotation {1}/{0}.HCPMMP1.annot --seg {0}.glassertemp1.mgz"
+                .format(hemi,args.atlasdir), shell=True)
+            # convert to subjects native space
+            subprocess.call("mri_surf2surf --srcsubject fsaverage --trgsubject {2}{3} --sval {0}.glassertemp1.mgz --hemi {0} --tval ./{1}/{0}.{1}.mgz"
+                .format(hemi,args.outname,sub,suffix), shell=True)
+            # convert mgz to gii
+            subprocess.call("mris_convert -f ./{1}/{0}.{1}.mgz ./surf/{0}.white ./{1}/{0}.{1}.gii"
+                .format(hemi,args.outname), shell=True)
+            # convert gii to niml.dset
+            subprocess.call("ConvertDset -o_niml_asc -input ./{1}/{0}.{1}.gii -prefix ./{1}/{0}.{1}.niml.dset"
+                .format(hemi,args.outname), shell=True)
             
-    os.chdir(curdir)
-    if os.path.isdir("{0}".format(args.outdir)):
-        print "Output directory {0} exists, adding '_new'".format(args.outdir) 
-        shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}_new".format(args.outdir)) 
-    else:
-        shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}".format(args.outdir)) 
-    if args.keeptemp is not True:
-        # remove temporary directory
-        shutil.rmtree(tmpdir) 
+        os.chdir(curdir)
+        if os.path.isdir("{0}".format(args.outdir)):
+            print "Output directory {0} exists, adding '_new'".format(args.outdir) 
+            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}_new".format(args.outdir)) 
+        else:
+            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}".format(args.outdir)) 
+        if args.keeptemp is not True:
+            # remove temporary directory
+            shutil.rmtree(tmpdir) 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
@@ -68,10 +68,10 @@ if __name__ == "__main__":
         "https://balsa.wustl.edu/study/show/RVVG\n"
         "############################################################"
         ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
-    parser.add_argument("subject",
-        type=str,nargs="?", help="Subject ID (without '_fs4')") 
-    parser.add_argument("-v", "--verbose", action="store_true",
-        help="increase output verbosity")    
+    parser.add_argument(
+        "subjects",type=str,nargs="+", help="One or more subject IDs (without '_fs4')") 
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",help="increase output verbosity")    
     parser.add_argument(
         "--atlasdir", metavar="str", type=str,default="{0}/ROI_TEMPLATES/Glasser2016".format(os.environ["SUBJECTS_DIR"]),
          nargs="?", help="Full path to atlas directory \n(default: {SUBJECTS_DIR}/ROI_TEMPLATES/Glasser2016)")
