@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import argparse, logging, os, subprocess,tempfile, shutil, glob
+import argparse, logging, os, subprocess,tempfile, shutil, glob,sys
 from os.path import expanduser
 
 def main(args, loglevel):
@@ -99,8 +99,8 @@ def main(args, loglevel):
         
         # copy mapping file to subjects' home SUMA directory
         if newmap:            
-            os.rename("./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(args.subject,suffix,hemi), 
-                  "{3}/{0}{1}.std141_to_native.{2}.niml.M2M".format(args.subject,suffix,hemi,sumadir))
+            shutil.move("./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(args.subject,suffix,hemi),
+                        "{3}/{0}{1}.std141_to_native.{2}.niml.M2M".format(args.subject,suffix,hemi,sumadir))
     
     os.chdir(curdir)
     if os.path.isdir("{0}".format(args.outdir)):
@@ -118,20 +118,21 @@ if __name__ == "__main__":
         "############################################################\n"
         "Script for converting atlas ROIs from AFNI/SUMA std141\n"
         "into subjects' native surface space. \n"
-        "Current implementation uses only ROIs atlas from \n"
+        "Current implementation uses ROIs atlas from \n"
         "Wang, Mruczek, Arcaro & Kastner (Cerebral Cortex 2014).\n"
+        "For a different atlas, see function mriGlasserConvert.py.\n"
         "Script heavily inspired by shell script from Ryan Mruczek. \n"
         "Requires atlas template, which can be downloaded at: \n"
         "http://www.princeton.edu/~napl/vtpm.htm\n"
         "############################################################"
         ,formatter_class=argparse.RawTextHelpFormatter,usage=argparse.SUPPRESS)
-    parser.add_argument("subject",
-        type=str,nargs="?", help="Subject ID (without '_fs4')") 
+    parser.add_argument(
+        "subject",type=str,nargs="?", help="Subject ID (without '_fs4')") 
     parser.add_argument("-v", "--verbose", action="store_true",
         help="increase output verbosity")    
     parser.add_argument(
-        "--atlasdir", metavar="str", type=str,default="{0}/Kastner2015Atlas/ProbAtlas_v4/subj_surf_all".format(os.environ["SUBJECTS_DIR"]),
-         nargs="?", help="Full path to atlas directory \n(default: {SUBJECTS_DIR}/Kastner2015Atlas/ProbAtlas_v4/subj_surf_all)")
+        "--atlasdir", metavar="str", type=str,default="{0}/ROI_TEMPLATES/Wang2015/ProbAtlas_v4/subj_surf_all".format(os.environ["SUBJECTS_DIR"]),
+         nargs="?", help="Full path to atlas directory \n(default: {fsdir}/ROI_TEMPLATES/Wang2015/ProbAtlas_v4/subj_surf_all)")
     parser.add_argument(
         "--outname", metavar="str", type=str,default="wangatlas",
          nargs="?", help="Output file name \n(default: wangatlas)")    
@@ -145,7 +146,7 @@ if __name__ == "__main__":
         "--intertype", metavar="str", type=str,default='NearestNode',
          nargs="?", help="Interpolation type?  \n(default: NearestNode)")
     parser.add_argument(
-        "--do_clust", help="Do optional surface-based clustering of each ROI?  \n(default: on)",
+        "--doclust", help="Do optional surface-based clustering of each ROI?  \n(default: on)",
         action="store_true")    
     parser.add_argument(
         "--no_fs4", help="Auto add SVNDL-style '_fs4' suffix to subject ID?  \n(default: on)",
@@ -153,7 +154,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--keeptemp", help="Keep temporary folder? (default: off)",
         action="store_true")
-
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(1)
     args = parser.parse_args()
     # Setup logging
     if args.verbose:
