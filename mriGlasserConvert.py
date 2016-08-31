@@ -87,12 +87,6 @@ if __name__ == "__main__":
         "--fsdir", metavar="str", type=str,default=os.environ["SUBJECTS_DIR"],
          nargs="?", help="Full path to output directory  \n(default: as set in environment variable from bash)")
     parser.add_argument(
-        "--intertype", metavar="str", type=str,default='NearestNode',
-         nargs="?", help="Interpolation type?  \n(default: NearestNode)")
-    parser.add_argument(
-        "--do_clust", help="Do optional surface-based clustering of each ROI?  \n(default: on)",
-        action="store_true")    
-    parser.add_argument(
         "--no_fs4", help="Auto add SVNDL-style '_fs4' suffix to subject ID?  \n(default: on)",
         action="store_true")
     parser.add_argument(

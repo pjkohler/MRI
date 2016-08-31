@@ -138,8 +138,8 @@ if __name__ == "__main__":
         "--atlasdir", metavar="str", type=str,default="{0}/ROI_TEMPLATES/Wang2015/ProbAtlas_v4/subj_surf_all".format(os.environ["SUBJECTS_DIR"]),
          nargs="?", help="Full path to atlas directory \n(default: {fsdir}/ROI_TEMPLATES/Wang2015/ProbAtlas_v4/subj_surf_all)")
     parser.add_argument(
-        "--outname", metavar="str", type=str,default="wangatlas",
-         nargs="?", help="Output file name \n(default: wangatlas)")    
+        "--outname", metavar="str", type=str,default="wang_atlas",
+         nargs="?", help="Output file name \n(default: wang_atlas)")    
     parser.add_argument(
         "--outdir", metavar="str", type=str,default="standard",
          nargs="?", help="Full path to output directory  \n(default: {fsdir}/{subject ID}/{outname}/)")
