@@ -19,7 +19,7 @@ def main(args, loglevel):
         if args.outdir in "standard":
             outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
         else:
-            outdir = args.outdir
+            outdir = "{0}_{1}".format(args.outdir,sub) # force subject in name, in case multiple subjects
         
         # make temporary, local folder
         curdir = os.getcwd()
