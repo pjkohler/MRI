@@ -8,13 +8,18 @@ def main(args, loglevel):
     #logging.info("You passed an argument.")
     #logging.debug("Your Argument: %s" % args.file_names)
     
-    # assign remaining defaults
-    if args.no_fs4:
-        suffix=""
-    else:
-        suffix="_fs4"
-    
     for sub in args.subjects: # loop over list of subjects
+    
+        # check if subjects' freesurfer directory exists
+        if os.path.isdir("{0}/{1}".format(args.fsdir,sub)):
+            # no suffix needed
+            suffix=""
+        else:
+            # suffix needed
+            suffix="_fs4"
+            if not os.path.isdir("{0}/{1}{2}".format(args.fsdir,sub,suffix)):
+                sys.exit("ERROR!\nSubject folder {0}/{1} \ndoes not exist, without or with suffix '{2}'."
+                    .format(args.fsdir,sub,suffix))
         
         if args.outdir in "standard":
             outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
@@ -66,7 +71,7 @@ def main(args, loglevel):
             subprocess.call("ConvertDset -o_1D -input ./{1}/{0}.{1}.niml.dset -prepend_node_index_1D -prefix ./{1}/{0}.{1}.1D.dset"
                 .format(hemi, args.outname), shell=True)
             
-            if args.doclust: # do optional surface-based clustering
+            if args.skipclust: # do optional surface-based clustering
                 for idx in range(1,26):
                     # clustering steps
                     specfile="./SUMA/{0}{1}_{2}.spec".format(sub,suffix,hemi)  
@@ -107,7 +112,7 @@ def main(args, loglevel):
                             "{3}/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi,sumadir))
         
         os.chdir(curdir)
-        if os.path.isdir("{0}".format(outdir)):
+        if os.path.isdir(outdir):
             print "Output directory {0} exists, adding '_new'".format(outdir) 
             shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}_new".format(outdir)) 
         else:
@@ -150,11 +155,8 @@ if __name__ == "__main__":
         "--intertype", metavar="str", type=str,default='NearestNode',
          nargs="?", help="Interpolation type?  \n(default: NearestNode)")
     parser.add_argument(
-        "--doclust", help="Do optional surface-based clustering of each ROI?  \n(default: on)",
+        "--skipclust", help="Skip optional surface-based clustering of each ROI?  \n(default: don't skip)",
         action="store_true")    
-    parser.add_argument(
-        "--no_fs4", help="Auto add SVNDL-style '_fs4' suffix to subject ID?  \n(default: on)",
-        action="store_true")
     parser.add_argument(
         "--keeptemp", help="Keep temporary folder? (default: off)",
         action="store_true")

@@ -8,12 +8,18 @@ def main(args, loglevel):
     #logging.info("You passed an argument.")
     #logging.debug("Your Argument: %s" % args.file_names)
     
-    # assign remaining defaults
-    if args.no_fs4:
-        suffix=""
-    else:
-        suffix="_fs4"
     for sub in args.subjects: # loop over list of subjects
+    
+        # check if subjects' freesurfer directory exists
+        if os.path.isdir("{0}/{1}".format(args.fsdir,sub)):
+            # no suffix needed
+            suffix=""
+        else:
+            # suffix needed
+            suffix="_fs4"
+            if not os.path.isdir("{0}/{1}{2}".format(args.fsdir,sub,suffix)):
+                sys.exit("ERROR!\nSubject folder {0}/{1} \ndoes not exist, without or with suffix '{2}'."
+                    .format(args.fsdir,sub,suffix))
         
         if args.outdir in "standard":
             outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
@@ -49,7 +55,7 @@ def main(args, loglevel):
                 .format(hemi,args.outname), shell=True)
             
         os.chdir(curdir)
-        if os.path.isdir("{0}".format(outdir)):
+        if os.path.isdir(outdir):
             print "Output directory {0} exists, adding '_new'".format(outdir) 
             shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}_new".format(outdir)) 
         else:
@@ -86,9 +92,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fsdir", metavar="str", type=str,default=os.environ["SUBJECTS_DIR"],
          nargs="?", help="Full path to output directory  \n(default: as set in environment variable from bash)")
-    parser.add_argument(
-        "--no_fs4", help="Auto add SVNDL-style '_fs4' suffix to subject ID?  \n(default: on)",
-        action="store_true")
     parser.add_argument(
         "--keeptemp", help="Keep temporary folder? (default: off)",
         action="store_true")

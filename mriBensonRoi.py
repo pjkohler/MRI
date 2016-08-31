@@ -8,12 +8,19 @@ def main(args, loglevel):
     #logging.info("You passed an argument.")
     #logging.debug("Your Argument: %s" % args.file_names)
     
-    # assign remaining defaults
-    if args.no_fs4:
-        suffix=""
-    else:
-        suffix="_fs4"
+
     for sub in args.subjects: # loop over list of subjects
+
+        # check if subjects' freesurfer directory exists
+        if os.path.isdir("{0}/{1}".format(args.fsdir,sub)):
+            # no suffix needed
+            suffix=""
+        else:
+            # suffix needed
+            suffix="_fs4"
+            if not os.path.isdir("{0}/{1}{2}".format(args.fsdir,sub,suffix)):
+                sys.exit("ERROR!\nSubject folder {0}/{1} \ndoes not exist, without or with suffix '{2}'."
+                    .format(args.fsdir,sub,suffix))        
         
         if args.outdir in "standard":
             outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
@@ -109,9 +116,6 @@ if __name__ == "__main__":
          nargs="?", help="Full path to output directory  \n(default: as set in environment variable from bash)")
     parser.add_argument(
         "--forcex", help="Force xhemi registration  \n(default: off)",
-        action="store_true")
-    parser.add_argument(
-        "--no_fs4", help="Don't add SVNDL-style '_fs4' suffix to subject ID  \n(default: '_fs4' is added)",
         action="store_true")
     parser.add_argument(
         "--separate_out", help="Make separate output files  \n(default: off)",
