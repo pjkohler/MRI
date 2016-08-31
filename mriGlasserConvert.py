@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import argparse, logging, os, subprocess,tempfile, shutil, glob
+import argparse, logging, os, subprocess,tempfile, shutil, glob,sys
 from os.path import expanduser
 
 def main(args, loglevel):
@@ -96,7 +96,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--keeptemp", help="Keep temporary folder? (default: off)",
         action="store_true")
-
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(1)
     args = parser.parse_args()
     # Setup logging
     if args.verbose:
