@@ -17,7 +17,9 @@ def main(args, loglevel):
     for sub in args.subjects: # loop over list of subjects
         
         if args.outdir in "standard":
-            args.outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
+            outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
+        else:
+            outdir = args.outdir
         
         # make temporary, local folder
         curdir = os.getcwd()
@@ -105,11 +107,11 @@ def main(args, loglevel):
                             "{3}/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi,sumadir))
         
         os.chdir(curdir)
-        if os.path.isdir("{0}".format(args.outdir)):
-            print "Output directory {0} exists, adding '_new'".format(args.outdir) 
-            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}_new".format(args.outdir)) 
+        if os.path.isdir("{0}".format(outdir)):
+            print "Output directory {0} exists, adding '_new'".format(outdir) 
+            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}_new".format(outdir)) 
         else:
-            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}".format(args.outdir)) 
+            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}".format(outdir)) 
         if args.keeptemp is not True:
             # remove temporary directory
             shutil.rmtree(tmpdir) 

@@ -16,7 +16,9 @@ def main(args, loglevel):
     for sub in args.subjects: # loop over list of subjects
         
         if args.outdir in "standard":
-            args.outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
+            outdir = "{0}/{1}{2}/{3}".format(args.fsdir,sub,suffix,args.outname)
+        else:
+            outdir = args.outdir
     
         # make temporary, local folder
         curdir = os.getcwd()
@@ -47,11 +49,11 @@ def main(args, loglevel):
                 .format(hemi,args.outname), shell=True)
             
         os.chdir(curdir)
-        if os.path.isdir("{0}".format(args.outdir)):
-            print "Output directory {0} exists, adding '_new'".format(args.outdir) 
-            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}_new".format(args.outdir)) 
+        if os.path.isdir("{0}".format(outdir)):
+            print "Output directory {0} exists, adding '_new'".format(outdir) 
+            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}_new".format(outdir)) 
         else:
-            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}".format(args.outdir)) 
+            shutil.move("{0}/{1}".format(tmpdir,args.outname), "{0}".format(outdir)) 
         if args.keeptemp is not True:
             # remove temporary directory
             shutil.rmtree(tmpdir) 
@@ -76,8 +78,8 @@ if __name__ == "__main__":
         "--atlasdir", metavar="str", type=str,default="{0}/ROI_TEMPLATES/Glasser2016".format(os.environ["SUBJECTS_DIR"]),
          nargs="?", help="Full path to atlas directory \n(default: {SUBJECTS_DIR}/ROI_TEMPLATES/Glasser2016)")
     parser.add_argument(
-        "--outname", metavar="str", type=str,default="glassatlas",
-         nargs="?", help="Output file name \n(default: glassatlas)")    
+        "--outname", metavar="str", type=str,default="glass_atlas",
+         nargs="?", help="Output file name \n(default: glass_atlas)")    
     parser.add_argument(
         "--outdir", metavar="str", type=str,default="standard",
          nargs="?", help="Full path to output directory  \n(default: {fsdir}/{subject ID}/{outname}/)")
