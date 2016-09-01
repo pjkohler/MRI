@@ -50,7 +50,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
         "#############################################################\n"
-        "Script for second stage of preprocessing: Volume registation.\n"
+        "Function for second stage of preprocessing: Volume registation.\n"
         "Typically run following mriPre.py\n"
         "See option --slow for difficult cases \n"
         "\n"

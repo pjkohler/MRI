@@ -92,7 +92,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
         "#############################################################\n"
-        "Script for generating V1-V3 ROIs in subject's native space,  \n" 
+        "Function for generating V1-V3 ROIs in subject's native space,  \n" 
         "predicted from the cortical surface anatomy\n"
         "as described in Benson et al. (PLoS Comput Biol., 2014).\n"
         "Requires template data, which can be downloaded at:\n"
@@ -116,7 +116,7 @@ if __name__ == "__main__":
          nargs="?", help="Full path to output directory  \n(default: {fsdir}/{subject ID}/{outname}/)")
     parser.add_argument(
         "--fsdir", metavar="str", type=str,default=os.environ["SUBJECTS_DIR"],
-         nargs="?", help="Full path to output directory  \n(default: as set in environment variable from bash)")
+         nargs="?", help="Full path to freesurfer directory  \n(default: as set in environment variable from bash)")
     parser.add_argument(
         "--forcex", help="Force xhemi registration  \n(default: off)",
         action="store_true")

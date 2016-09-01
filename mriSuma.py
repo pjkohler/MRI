@@ -49,7 +49,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
         "###############################################################\n"
-        "Wrapper function for opening SUMA viewer.\n"
+        "Wrapper function for easy opening of SUMA viewer.\n"
         "Supports opening suma surfaces both in native and std141 space.\n"
         "Supports opening a volume file in afni, linked to the surfaces,\n"
         "via the --openvol and --volpath options. If volpath is given,  \n"

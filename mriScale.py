@@ -51,7 +51,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
         "################################################################\n"
-        "Script for third stage of preprocessing: Scaling and Detrending.\n"
+        "Function for third stage of preprocessing: Scaling and Detrending.\n"
         "Typically run following mriPre.py and mriVolreg.py \n"
         "Detrending currently requires motion registration parameters\n"
         "as .1D files: motparam.xxx.1D \n"

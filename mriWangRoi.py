@@ -127,7 +127,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
         "###########################################################\n"
-        "Script for converting atlas ROIs from AFNI/SUMA std141\n"
+        "Function for converting atlas ROIs from AFNI/SUMA std141\n"
         "into subjects' native surface space. \n"
         "Current implementation uses ROIs atlas from \n"
         "Wang, Mruczek, Arcaro & Kastner (Cerebral Cortex 2014).\n"
@@ -154,7 +154,7 @@ if __name__ == "__main__":
          nargs="?", help="Full path to output directory  \n(default: {fsdir}/{subject ID}/{outname}/)")
     parser.add_argument(
         "--fsdir", metavar="str", type=str,default=os.environ["SUBJECTS_DIR"],
-         nargs="?", help="Full path to output directory  \n(default: as set in environment variable from bash)")
+         nargs="?", help="Full path to freesurfer directory  \n(default: as set in environment variable from bash)")
     parser.add_argument(
         "--intertype", metavar="str", type=str,default='NearestNode',
          nargs="?", help="Interpolation type?  \n(default: NearestNode)")

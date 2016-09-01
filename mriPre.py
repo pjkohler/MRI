@@ -78,7 +78,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
         "###########################################################\n"
-        "Script for first stage of preprocessing\n"
+        "Function for first stage of preprocessing\n"
         "Slice-time correction and deobliqueing, in that order.\n"
         "Also supports data with different number of slices,\n"
         "and padding of the matrices, via flags \n"
