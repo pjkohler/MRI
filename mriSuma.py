@@ -1,15 +1,11 @@
 #!/usr/bin/env python
 
-import argparse, logging, os, subprocess,tempfile, shutil, glob,sys
-from os.path import expanduser
+import argparse, logging, os, subprocess, sys
 
 def main(args, loglevel):
     #logging.basicConfig(format="%(levelname)s: %(message)s", level=loglevel)
     #logging.info("You passed an argument.")
     #logging.debug("Your Argument: %s" % args.file_names)
-
-    # get current directory    
-    curdir = os.getcwd()    
     
     # check if subjects' SUMA directory exists
     if os.path.isdir("{0}/{1}/SUMA".format(args.fsdir,args.subject)):
