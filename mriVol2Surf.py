@@ -55,13 +55,15 @@ def main(args, loglevel):
         specprefix = ""    
     
     sumadir = "{0}/{1}{2}/SUMA".format(args.fsdir,args.subject,suffix)
+    print sumadir
     for file in glob.glob(sumadir+"/*h.smoothwm.asc"):
             shutil.copy(file,tmpdir)
     for file in glob.glob(sumadir+"/*h.pial.asc"):
             shutil.copy(file,tmpdir)
     for file in glob.glob("{0}/{1}{2}{3}*.spec".format(sumadir,specprefix,args.subject,suffix)):
         shutil.copy(file,tmpdir)
-    for file in glob.glob(sumadir+"/*aparc.a2009s.annot.niml.dset"):
+    # for some reason, 3dVol2Surf requires these files, so copy them as well
+    for file in glob.glob(sumadir+"/*aparc.*.annot.niml.dset"):
         shutil.copy(file,tmpdir)
     
     os.chdir(tmpdir)
@@ -103,9 +105,9 @@ def main(args, loglevel):
                     .format(specprefix,args.subject,suffix,hemi,volfile,filename,args.mapfunc,args.index,args.wm_mod,args.gm_mod,args.steps,curdir,args.prefix,maskcode), shell=True)
     
     os.chdir(curdir)    
-    #if args.keeptemp is not True:
-    #    # remove temporary directory
-    #    shutil.rmtree(tmpdir) 
+    if args.keeptemp is not True:
+        # remove temporary directory
+        shutil.rmtree(tmpdir) 
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
