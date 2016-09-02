@@ -55,7 +55,6 @@ def main(args, loglevel):
         specprefix = ""    
     
     sumadir = "{0}/{1}{2}/SUMA".format(args.fsdir,args.subject,suffix)
-    print sumadir
     for file in glob.glob(sumadir+"/*h.smoothwm.asc"):
             shutil.copy(file,tmpdir)
     for file in glob.glob(sumadir+"/*h.pial.asc"):
@@ -66,8 +65,10 @@ def main(args, loglevel):
     for file in glob.glob(sumadir+"/*aparc.*.annot.niml.dset"):
         shutil.copy(file,tmpdir)
     
+    
     os.chdir(tmpdir)
     for curfile in args.infiles:
+        shutil.copy("{0}/{1}".format(curdir,curfile),tmpdir)
         if ".niml.dset" in curfile:
             filename = curfile[:-10]
         elif ".niml.roi" in curfile:
@@ -89,14 +90,14 @@ def main(args, loglevel):
 
         subprocess.call("3dSurf2Vol -spec {0}{1}{2}_{3}.spec \
                     -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {4} \
-                    -sdata {5} -map_func {6} -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
+                    -sdata {5}.niml.dset -map_func {6} -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
                     -prefix {11}/{5}+orig"
                     .format(specprefix,args.subject,suffix,hemi,volfile,filename,args.mapfunc,args.index,args.wm_mod,args.gm_mod,args.steps,curdir), shell=True)
     
     os.chdir(curdir)    
-    if args.keeptemp is not True:
+#    if args.keeptemp is not True:
         # remove temporary directory
-        shutil.rmtree(tmpdir) 
+#        shutil.rmtree(tmpdir) 
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=

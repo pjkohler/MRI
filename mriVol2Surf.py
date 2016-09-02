@@ -55,7 +55,6 @@ def main(args, loglevel):
         specprefix = ""    
     
     sumadir = "{0}/{1}{2}/SUMA".format(args.fsdir,args.subject,suffix)
-    print sumadir
     for file in glob.glob(sumadir+"/*h.smoothwm.asc"):
             shutil.copy(file,tmpdir)
     for file in glob.glob(sumadir+"/*h.pial.asc"):
@@ -126,7 +125,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "subject",type=str,nargs="?", help="Subject ID (without '_fs4')")
     parser.add_argument(
-        "infiles",type=str,nargs="+", help="List of EPI files") 
+        "infiles",type=str,nargs="+", help="List of EPI files (+orig or nii.gz)") 
     parser.add_argument(
         "-v", "--verbose", action="store_true",help="increase output verbosity")    
     parser.add_argument(

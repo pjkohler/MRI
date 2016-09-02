@@ -73,7 +73,8 @@ def main(args, loglevel):
             subprocess.call("ConvertDset -o_1D -input ./{1}/{0}.{1}.niml.dset -prepend_node_index_1D -prefix ./{1}/{0}.{1}.1D.dset"
                 .format(hemi, args.outname), shell=True)
             
-            if args.skipclust: # do optional surface-based clustering
+            if not args.skipclust: # do optional surface-based clustering
+                print '######################## CLUSTERING ########################'
                 for idx in range(1,26):
                     # clustering steps
                     specfile="./SUMA/{0}{1}_{2}.spec".format(sub,suffix,hemi)  
