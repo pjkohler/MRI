@@ -24,15 +24,15 @@ def main(args, loglevel):
     else:
         specfile="{0}/{1}{2}_{3}.spec".format(sumadir,args.subject,suffix,args.hemi)
     
-    if args.volpath is "standard":
-        args.volpath = "{0}/{1}{2}/SUMA/{1}{2}_SurfVol+orig".format(args.fsdir,args.subject,suffix)
+    if args.surfvol is "standard":
+        args.surfvol = "{0}/{1}{2}/SUMA/{1}{2}_SurfVol+orig".format(args.fsdir,args.subject,suffix)
     else:
-        # if volpath was assigned, assume user wants to open volume
+        # if surfvol was assigned, assume user wants to open volume
         args.openvol = True
 
     if args.openvol:        
-        voldir = '/'.join(args.volpath.split('/')[0:-1])
-        volfile = args.volpath.split('/')[-1]        
+        voldir = '/'.join(args.surfvol.split('/')[0:-1])
+        volfile = args.surfvol.split('/')[-1]        
         if voldir: # if volume directory is not empty
              os.chdir(voldir)
         subprocess.call("afni -niml & SUMA -spec {0} -sv {1} &"
@@ -48,7 +48,7 @@ if __name__ == "__main__":
         "Wrapper function for easy opening of SUMA viewer.\n"
         "Supports opening suma surfaces both in native and std141 space.\n"
         "Supports opening a volume file in afni, linked to the surfaces,\n"
-        "via the --openvol and --volpath options. If volpath is given,  \n"
+        "via the --openvol and --surfvol options. If surfvol is given,  \n"
         "openvol will be assumed. Note that when a volume file is given,\n"
         "script will change to its directory.                           \n"
         "\n"
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--openvol", help="Open volume in AFNI concurrently  \n(default: off)", action="store_true")  
     parser.add_argument(
-        "--volpath", metavar="str", type=str,default="standard", nargs="?", help="Full path to specific volume file to open \n(default: SurfVol+orig in SUMA folder)")
+        "--surfvol", metavar="str", type=str,default="standard", nargs="?", help="Full path to specific volume file to open \n(default: SurfVol+orig in SUMA folder)")
     parser.add_argument(
         "--std141", help="Open std141 version of surface  \n(default: off)", action="store_true")
     parser.add_argument(
