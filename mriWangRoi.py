@@ -43,6 +43,8 @@ def main(args, loglevel):
             shutil.copy(file,tmpdir+"/SUMA")
         for file in glob.glob("{0}/{1}{2}.std141_to_native.*.niml.M2M".format(sumadir,sub,suffix)):
             shutil.copy(file,tmpdir+"/SUMA")
+        for file in glob.glob("{0}/maxprob_surf_*.1D.dset".format(args.atlasdir)):
+            shutil.copy(file,tmpdir)
             
         os.chdir(tmpdir)
         for hemi in ["lh","rh"]:
@@ -51,14 +53,14 @@ def main(args, loglevel):
             mapfile = "./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi)
             if os.path.isfile(mapfile):
                 print("Using existing mapping file {0}".format(mapfile))
-                subprocess.call("SurfToSurf -i_fs ./SUMA/{0}.smoothwm.asc -i_fs ./SUMA/std.141.{0}.smoothwm.asc -output_params {1} -mapfile {2} -dset {3}/maxprob_surf_{0}.1D.dset'[1..$]'"
-                    .format(hemi,args.intertype,mapfile,args.atlasdir), shell=True)
+                subprocess.call("SurfToSurf -i_fs ./SUMA/{0}.smoothwm.asc -i_fs ./SUMA/std.141.{0}.smoothwm.asc -output_params {1} -mapfile {2} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
+                    .format(hemi,args.intertype,mapfile), shell=True)
                 newmap = False
             else:
                 print "Generating new mapping file"
                 newmap = True
-                subprocess.call("SurfToSurf -i_fs ./SUMA/{0}.smoothwm.asc -i_fs ./SUMA/std.141.{0}.smoothwm.asc -output_params {1} -dset {2}/maxprob_surf_{0}.1D.dset'[1..$]'"
-                    .format(hemi,args.intertype,args.atlasdir), shell=True)       
+                subprocess.call("SurfToSurf -i_fs ./SUMA/{0}.smoothwm.asc -i_fs ./SUMA/std.141.{0}.smoothwm.asc -output_params {1} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
+                    .format(hemi,args.intertype), shell=True)       
                 # update M2M file name to be more informative and not conflict across hemispheres
                 os.rename("./SurfToSurf.niml.M2M".format(args.outname, hemi), "./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi))
             
