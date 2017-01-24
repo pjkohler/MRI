@@ -83,7 +83,7 @@ def main(args, loglevel):
         if 'lh' in filename.split('.'):
             hemi = 'lh'
         elif 'rh' in filename.split('.'):
-            hemi = 'lh'
+            hemi = 'rh'
         else:
             sys.exit("ERROR! Hemisphere could not be deduced from: '{0}'."
                 .format(curfile))
@@ -91,13 +91,15 @@ def main(args, loglevel):
         subprocess.call("3dSurf2Vol -spec {0}{1}{2}_{3}.spec \
                     -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {4} \
                     -sdata {5}.niml.dset -map_func {6} -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
-                    -prefix {11}/{5}+orig"
-                    .format(specprefix,args.subject,suffix,hemi,volfile,filename,args.mapfunc,args.index,args.wm_mod,args.gm_mod,args.steps,curdir), shell=True)
+                    -prefix {11}/{5}"
+                    .format(specprefix,args.subject,suffix,hemi,volfile,filename,args.mapfunc,args.index,args.wm_mod,args.gm_mod,args.steps,tmpdir), shell=True)
+
+        subprocess.call("3dcopy {2}/{0}+orig {1}/{0}.nii.gz".format(filename,args.outdir,tmpdir), shell=True)
     
     os.chdir(curdir)    
-#    if args.keeptemp is not True:
+    if args.keeptemp is not True:
         # remove temporary directory
-#        shutil.rmtree(tmpdir) 
+        shutil.rmtree(tmpdir) 
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
@@ -126,6 +128,8 @@ if __name__ == "__main__":
         "--gm_mod", metavar="float", type=float,default=0.0,nargs="?", help="Amount to modulate gm boundary, as a fraction \nof total wm-gm distance.\nNegative values imply moving the boundary \ntowards brain center, positive values towards skull \n(default: 0.0)")
     parser.add_argument(
         "--fsdir", metavar="str", type=str,default=os.environ["SUBJECTS_DIR"],nargs="?", help="Full path to freesurfer directory  \n(default: as set in environment variable from bash)")
+    parser.add_argument(
+        "--outdir", metavar="str", type=str,default=os.getcwd(),nargs="?", help="Output directory  \n(default: current directory)")
     parser.add_argument(
         "--surfvol", metavar="str", type=str,default="standard", nargs="?", help="Surface volume file to use \n(default: SurfVol+orig in SUMA folder)")
     parser.add_argument(
