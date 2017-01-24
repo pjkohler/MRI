@@ -80,7 +80,7 @@ def main(args, loglevel):
                 for idx in range(1,26):
                     # clustering steps
                     specfile="./SUMA/{0}{1}_{2}.spec".format(sub,suffix,hemi)  
-                    surffile="./SUMA/{1}.smoothwm.asc".format(suffix,hemi)
+                    surffile="./SUMA/{0}.smoothwm.asc".format(hemi)
         
                     # isolate ROI
                     subprocess.call("3dcalc -a ./{0}/{2}.{0}.niml.dset -expr 'iszero(a-{1})' -prefix {2}.temp.niml.dset"
