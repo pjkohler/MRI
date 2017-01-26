@@ -26,38 +26,35 @@ function outStrct = mriFFT(inData,nCycles,nHarm,roiName)
     end
     
     if ndims(inData) > 3 % whole brain data
-        inData = nanmean(inData,5); % average over runs
+        readyData = nanmean(inData,5); % average over runs
         % fourth dimension is the time dimension
         % temporalily shift this to the first dimension
-        mean_tSeries = permute(inData,[4,1,2,3]); 
+        readyData = permute(readyData,[4,1,2,3]); 
     else % roi data
         % first dimension is the time dimension
-        if ndims(inData) == 3
-            inData = nanmean(inData,3); % average over runs
-        else
-        end
+        readyData = nanmean(inData,3); % average over runs
         if ndims(inData) > 1
             % average over voxels, then fft
-            mean_tSeries = mean(inData,2);
+            readyData = mean(readyData,2);
         else
         end
     end
-    nT = size(inData,1); 
+    nT = size(readyData,1); 
     maxCycles = round(nT/2);
     
     % scale amplitude by length
     % and multiply by 2 to get single-sided spectrum
     % (spectrum is symmetric around DC - positive and negative)
-    absFFT = 2*abs(fft(mean_tSeries,[],1)) ./ nT;    
+    absFFT = 2*abs(fft(readyData,[],1)) ./ nT;    
     y = absFFT(2:maxCycles+1,:,:,:); % omit DC 
     
     % compute phase
-    p = angle(fft(mean_tSeries,[],1));
+    p = angle(fft(readyData,[],1));
     p = p(2:maxCycles+1,:,:,:);
     y_angle = p(nCycles,:,:,:);
     
     % get real and imaginary component
-    y_complex = 2*fft(mean_tSeries,[],1) ./ nT;
+    y_complex = 2*fft(readyData,[],1) ./ nT;
     y_complex = y_complex(2:maxCycles+1,:,:,:);
 
     %Calculate Z-score
@@ -81,20 +78,20 @@ function outStrct = mriFFT(inData,nCycles,nHarm,roiName)
 
         % norcia-style Signal-to-Noise Ratio. 
         % Signal divided by mean of 4 side bands
-        lst2 = true([1, maxCycles]);
+        lst2 = false([1, maxCycles]);
         lst2([nCycles*c-1,nCycles*c-2,nCycles*c+1,nCycles*c+2])=true;
         norciaSNR(c,:,:,:) = y(nCycles*c,:,:,:)/mean(y(lst2,:,:,:));
         y_raw_amp(c,:,:,:) = y(nCycles*c,:,:,:);
 
         y_real_signal(c,:,:,:) = real(y_complex(nCycles*c,:,:,:));
-        y_real_noise(c,:,:,:,:) = real(y_complex(lst2));
+        y_real_noise(c,:,:,:,:) = real(y_complex(lst2,:,:,:));
         y_imag_signal(c,:,:,:) = imag(y_complex(nCycles*c,:,:,:));
         y_imag_noise(c,:,:,:,:) = imag(y_complex(lst2,:,:,:));
     end
     
     if ndims(inData) <= 3 % only compute mean cycle if ROI data
         % compute meanCycle
-        meanCycle = mean(reshape(mean(inData,2),size(inData,1)/nCycles,nCycles),2);
+        meanCycle = mean(reshape(readyData,size(readyData,1)/nCycles,nCycles),2);
         meanCycle = meanCycle-mean(meanCycle(1:3));
     else
         meanCycle = [];
