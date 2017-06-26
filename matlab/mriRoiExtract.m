@@ -3,18 +3,25 @@ function roiData = mriRoiExtract(DATAfile,ROIfile,oldStyle)
         oldStyle = false;
     else
     end
-    dataIdx = 0;
     if ~iscell(ROIfile)
         ROIfile = {ROIfile};
     else
     end
+    if ~iscell(DATAfile)
+        DATAfile = {DATAfile};
+    else
+    end
+    if length(DATAfile)>1
+        error('Only single datafiles allowed');
+    else
+    end
     if ~oldStyle
-        if ~isempty(strfind(DATAfile,'nii'))
-            tmp = NIfTI.Read(DATAfile);
+        if ~isempty(strfind(DATAfile{1},'nii'))
+            tmp = NIfTI.Read(DATAfile{1});
             allData = tmp.data;
             dim4 = size(allData,4);
-        elseif ~isempty(strfind(DATAfile,'orig.BRIK'))
-            [err, allData,info ] = BrikLoad(DATAfile);
+        elseif ~isempty(strfind(DATAfile{1},'orig.BRIK'))
+            [err, allData,info ] = BrikLoad(DATAfile{1});
             dim4 = size(allData,4);
         else
             error('DATA in unknown format')
@@ -40,13 +47,14 @@ function roiData = mriRoiExtract(DATAfile,ROIfile,oldStyle)
             end
         end
     else
+        dataIdx = 0;
         for r=1:length(ROIfile)
             system(['3dBrickStat -max -slow ',ROIfile{r},'>maxout']);
             roiMax = round(load('maxout'));
             system('rm maxout');
             for roiIdx = 1:roiMax
                 dataIdx = dataIdx+1;
-                status=system(['3dmaskdump -noijk -quiet -cmask ''-a ',ROIfile{r},' -expr ispositive(0.1-abs(a-',num2str(roiIdx),'))'' ',DATAfile,'>tempout']);
+                status=system(['3dmaskdump -noijk -quiet -cmask ''-a ',ROIfile{r},' -expr ispositive(0.1-abs(a-',num2str(roiIdx),'))'' ',DATAfile{1},'>tempout']);
                 if status == 0
                     roiData(dataIdx)={load('tempout')};
                 else
