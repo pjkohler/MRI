@@ -33,18 +33,21 @@ def main(args, loglevel):
     
     # copy relevant SUMA files
     sumadir = "{0}/{1}{2}/SUMA".format(args.fsdir,args.subject,suffix)
+    print(sumadir)
     for file in glob.glob(sumadir+"/*h.smoothwm.asc"):
         shutil.copy(file,tmpdir)
-    for file in glob.glob("{0}/{1}_*.spec".format(sumadir,args.subject)):
+    for file in glob.glob("{0}/{1}{2}{3}*.spec".format(sumadir,specprefix,args.subject,suffix)):
         shutil.copy(file,tmpdir)
-    
+
     os.chdir(tmpdir)
     
+    print(args.infiles)
+
     for curfile in args.infiles:
         if ".niml.dset" in curfile:
             filename = curfile[:-10]
-            split = filename.rpartition(".")            
-            hemi = split[0]
+            splitString = filename.split(".",1)
+            hemi = splitString[0]
             print hemi
             outname = "{0}_{1}fwhm".format(filename,args.blursize)
         else:
