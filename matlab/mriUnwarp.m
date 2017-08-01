@@ -1,5 +1,5 @@
 function mriUnwarp(dataDir)
-    addpath(genpath('/Users/kohler/Dropbox/CODE/git/gardner/gru'));
+    addpath(genpath('/Users/kohler/code/git/gardner/gru'));
     if ~iscell(dataDir)
         tempDir = {dataDir}; % wrap it
         clear dataDir;
