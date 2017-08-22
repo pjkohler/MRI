@@ -42,8 +42,13 @@ def main(args, loglevel):
             suffix = s.join(split[1:])
         
         # crop and move files
+        cur_totaltr = subprocess.check_output("3dinfo -nvi -short {1}/{0}{2}"
+            .format(filename,curdir,suffix), shell=True)
+        cur_totaltr =  cur_totaltr.rstrip("\n")
+
+
         subprocess.call("3dTcat -prefix {0}+orig {1}/{0}{2}''[{3}..{4}]''"
-            .format(filename,curdir,suffix,args.pre_tr,args.total_tr), shell=True)
+            .format(filename,curdir,suffix,args.pre_tr,min(cur_totaltr, args.total_tr)), shell=True)
         
         # slice timing correction
         if args.tfile is "none":
