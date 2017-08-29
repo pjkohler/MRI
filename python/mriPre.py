@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import argparse, logging, os, subprocess,tempfile, shutil,sys
+import argparse, logging, os, subprocess,tempfile, shutil,sys,glob
 from os.path import expanduser
 
 def main(args, loglevel):
@@ -28,6 +28,8 @@ def main(args, loglevel):
     tmpdir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))
     os.chdir(tmpdir)
     
+    namelist = []
+
     for curfile in args.infiles:
         if ".nii.gz" in curfile:
             filename = curfile[:-7]
@@ -65,19 +67,27 @@ def main(args, loglevel):
             subprocess.call("3dZeropad -A {1} -P {1} -I {2} -S {2} -prefix {0}.ts.do.pad+orig {0}.ts.do+orig".format(filename,args.pad_ap,args.pad_is), shell=True)
             subprocess.call("rm {0}.ts.do+orig*".format(filename), shell=True)
             subprocess.call("3dRename {0}.ts.do.pad+orig {0}.ts.do+orig".format(filename), shell=True)
-                
-        # take care of different matrices, and move files back        
+
         if args.diffmat:
-            subprocess.call("@Align_Centers -base {1} {0}.ts.do+orig".format(filename,args.ref), shell=True)
-            subprocess.call("3dresample -master {1} -prefix {0}.ts.do.rs+orig -inset {0}.ts.do_shft+orig".format(filename,args.ref), shell=True)
-            subprocess.call("3dAFNItoNIFTI -prefix {1}/{0}.ts.do.rs.nii.gz {0}.ts.do.rs+orig".format(filename,curdir), shell=True)    
+            # add filenames to list, move later
+            namelist.append(filename)
+            if curfile == args.ref:
+                refname = filename
         else:
             subprocess.call("3dAFNItoNIFTI -prefix {1}/{0}.ts.do.nii.gz {0}.ts.do+orig".format(filename,curdir), shell=True)
     
-    os.chdir(curdir)    
+    if args.diffmat:
+        # take care of different matrices, and move
+        for filename in namelist:
+                subprocess.call("@Align_Centers -base {1}.ts.do+orig -dset {0}.ts.do+orig".format(filename,refname), shell=True)
+                subprocess.call("3dresample -master {1}.ts.do+orig -prefix {0}.ts.do.rs+orig -inset {0}.ts.do_shft+orig".format(filename,refname), shell=True)
+                subprocess.call("3dAFNItoNIFTI -prefix {1}/{0}.ts.do.rs.nii.gz {0}.ts.do.rs+orig".format(filename,curdir), shell=True)   
+
+    os.chdir(curdir)
     if args.keeptemp is not True:
         # remove temporary directory
-        shutil.rmtree(tmpdir) 
+        shutil.rmtree(tmpdir)
+
       
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
