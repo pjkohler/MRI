@@ -47,7 +47,7 @@ function unwarp = mriUnwarp(dataDir,doUnwarp)
     %% CHECK FOR FSL INSTALL
     [s,r] = system('fslroi');
     if s==127
-        error('(fsl_pe0pe1) FSL may not be properly installed. Check your PATH');
+        error('FSL may not be properly installed. Check your PATH');
     end
     
     %% CHECK FOR FILES AND DO UNWARPING
@@ -203,7 +203,7 @@ function unwarp = fsl_pe0pe1(folder,unwarp)
     for i = 1:length(unwarp.EPIfiles)
         file = unwarp.EPIfiles{i};
         fileLoc = fullfile(folder,file);
-        if ~isfile(fileLoc)
+        if ~exist(fileLoc,'file')
             disp(sprintf('File %s did not unwarp!! All temp files remain: you can re-build the unwarp by hand.\n[dbcont] to continue.',fileLoc));
             keyboard
         end
@@ -246,23 +246,23 @@ end
 function outfile = hlpr_applytopup(tu,orig,tfolder,folder)
     % applytopup --imain=rs_EPIfiles --inindex=1 --method=jac --datain=acq_param.txt --topup=rs_topup --out=rs0_unwarped
     prefix = orig(1:end-4);
-
-    outfile = fullfile(folder,sprintf('uw_%s',prefix));
-    if isfile(outfile)
+    outfile = sprintf('uw_%s',prefix);
+    outfull = fullfile(folder,outfile);
+    if exist(outfull,'file')
         disp(sprintf('(applytopup) Unwarping has already been run: File %s exists, skipping.',outfile));
         return
     end
     disp(sprintf('(apply) apply for: %s',outfile));
     tu = fullfile(tfolder,tu);
     acqFile = fullfile(folder,'acq_params.txt');
-    command = sprintf('applytopup --imain=%s --inindex=1 --method=jac --datain=%s --topup=%s --out=%s',fullfile(folder,prefix),acqFile,tu,outfile);
+    command = sprintf('applytopup --imain=%s --inindex=1 --method=jac --datain=%s --topup=%s --out=%s',fullfile(folder,prefix),acqFile,tu,outfull);
     hlpr_fsl(command,true);
 end
 
 function outfile = hlpr_topup(merge,pos,tfolder,folder)
     outfile = sprintf('topup_%02.0f%s',pos);
     outfull = fullfile(tfolder,outfile);
-    if isfile(outfull)
+    if exist(outfull,'file')
         disp(sprintf('(topup) Topup already calculated: File %s exists, skipping.',outfile));
         return
     end
@@ -276,7 +276,7 @@ end
 function outfile = hlpr_fslmerge(scan0,scan1,pos,folder)
     outfile = sprintf('merge_%02.0f',pos);
     outfull = fullfile(folder,outfile);
-    if isfile(outfull)
+    if exist(outfull,'file')
         disp(sprintf('(merge) Merge already calculated: File %s exists, skipping.',outfile));
         return
     end
@@ -290,7 +290,7 @@ end
 function outfile = hlpr_fslroi(scan,pos,type,n1,n2,tfolder,folder)
     outfile = sprintf('pe%i_%02.0f%s',type,pos);
     outfull = fullfile(tfolder,outfile);
-    if isfile(outfull)
+    if exist(outfull,'file')
         disp(sprintf('(roi) ROI already calculated: File %s exists, skipping.',outfile));
         return
     end
