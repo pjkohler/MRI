@@ -1,6 +1,6 @@
-function [outData,dataDims,surfData] = mriReadBrainData(inputFiles,surfData)
+function [outData,dataStruct,surfData] = mriReadBrainData(inputFiles,surfData)
     if nargin < 2
-        if strcmp(inputFiles{1}(end-10:end),'niml.dset') % assume surface data if niml
+        if strcmp(inputFiles{1}(end-8:end),'niml.dset') % assume surface data if niml
             surfData = true;
         else
             surfData = false;
@@ -42,5 +42,6 @@ function [outData,dataDims,surfData] = mriReadBrainData(inputFiles,surfData)
                 outData(:,:,z) = tmp.data;
             end
         end
+        dataStruct{z} = rmfield(tmp,'data');
     end
 end

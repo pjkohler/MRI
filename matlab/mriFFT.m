@@ -74,13 +74,13 @@ function outStrct = mriFFT(inData,nCycles,nHarm,roiName)
     for c = 1:nHarm % the first nHarm harmonics of stimulus frequency
         lst1 = true([1, maxCycles]);
         lst1(nCycles*c) = 0;
-        zScore(c,:,:,:) = (y(nCycles*c,:,:,:) - mean(y(lst1,:,:,:),1)) / std(y(lst1,:,:,:),0,1); % all harmonics
+        zScore(c,:,:,:) = (y(nCycles*c,:,:,:) - mean(y(lst1,:,:,:),1)) ./ std(y(lst1,:,:,:),0,1); % all harmonics
 
         % norcia-style Signal-to-Noise Ratio. 
         % Signal divided by mean of 4 side bands
         lst2 = false([1, maxCycles]);
         lst2([nCycles*c-1,nCycles*c-2,nCycles*c+1,nCycles*c+2])=true;
-        norciaSNR(c,:,:,:) = y(nCycles*c,:,:,:)/mean(y(lst2,:,:,:));
+        norciaSNR(c,:,:,:) = y(nCycles*c,:,:,:) ./ mean(y(lst2,:,:,:));
         y_raw_amp(c,:,:,:) = y(nCycles*c,:,:,:);
 
         y_real_signal(c,:,:,:) = real(y_complex(nCycles*c,:,:,:));
@@ -91,7 +91,7 @@ function outStrct = mriFFT(inData,nCycles,nHarm,roiName)
     
     if ndims(inData) <= 3 % only compute mean cycle if ROI data
         % compute meanCycle
-        meanCycle = mean(reshape(readyData,size(readyData,1)/nCycles,nCycles),2);
+        meanCycle = mean(reshape(readyData,size(readyData,1)./ nCycles,nCycles),2);
         meanCycle = meanCycle-mean(meanCycle(1:3));
     else
         meanCycle = [];

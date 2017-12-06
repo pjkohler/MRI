@@ -4,7 +4,7 @@ function newHdr = mriBrainFFT(inputFiles,outputFile,nCycles)
     else
     end
     %% LOAD DATA FILE(s) and average
-    [inData,inSize,surfData] = mriNiftiRead(inputFiles);
+    [inData,inStrct,surfData] = mriReadBrainData(inputFiles);
     if surfData
         inData = permute(inData,[1,4,5,2,3]);
         % for surfaces, time is the second dimension and runs are the third
@@ -15,30 +15,30 @@ function newHdr = mriBrainFFT(inputFiles,outputFile,nCycles)
     clear inData; clear inSize;% free up memory
 
     %% COMPUTE FFT    
-    outStrct = mriFFT(meanData,nCycles);
+    dataStrct = mriFFT(meanData,nCycles);
     
     %% ORGANIZE DATA
     if ~surfData
-        voxSignal(:,:,:,1) = outStrct.zScore;
-        voxSignal(:,:,:,2) = outStrct.norciaSNR;
-        voxSignal(:,:,:,3) = outStrct.amplitude;
-        voxSignal(:,:,:,4) = outStrct.phase;
-        voxSignal(:,:,:,5) = outStrct.realSignal;
-        voxSignal(:,:,:,6) = outStrct.imagSignal;
+        voxSignal(:,:,:,1) = dataStrct.zScore;
+        voxSignal(:,:,:,2) = dataStrct.SNR;
+        voxSignal(:,:,:,3) = dataStrct.amplitude;
+        voxSignal(:,:,:,4) = dataStrct.phase;
+        voxSignal(:,:,:,5) = dataStrct.realSignal;
+        voxSignal(:,:,:,6) = dataStrct.imagSignal;
 
         %% PRINT NIFTI
-        newNii = origNii;
-        newNii = rmfield(newNii,{'data','ext'});
-        newNii.data = voxSignal;
-        newNii.hdr.dim(5) = size(voxSignal,4); % assign the number of t-dimensions
-        NIfTI.Write(newNii,outputFile);
+        outStrct = inStrct{1};
+        outStrct = rmfield(outStrct,'ext');
+        outStrct.data = voxSignal;
+        outStrct.hdr.dim(5) = size(voxSignal,4); % assign the number of t-dimensions
+        NIfTI.Write(outStrct,outputFile);
     else
-        surfSignal(:,1) = squeeze(outStrct.zScore);
-        surfSignal(:,2) = squeeze(outStrct.norciaSNR);
-        surfSignal(:,3) = squeeze(outStrct.amplitude);
-        surfSignal(:,4) = squeeze(outStrct.phase);
-        surfSignal(:,5) = squeeze(outStrct.realSignal);
-        surfSignal(:,6) = squeeze(outStrct.imagSignal);
+        surfSignal(:,1) = squeeze(dataStrct.zScore);
+        surfSignal(:,2) = squeeze(dataStrct.SNR);
+        surfSignal(:,3) = squeeze(dataStrct.amplitude);
+        surfSignal(:,4) = squeeze(dataStrct.phase);
+        surfSignal(:,5) = squeeze(dataStrct.realSignal);
+        surfSignal(:,6) = squeeze(dataStrct.imagSignal);
         
         newLabels(1) = {'Z-SCORE'};
         newLabels(2) = {'SNR'};
@@ -50,11 +50,11 @@ function newHdr = mriBrainFFT(inputFiles,outputFile,nCycles)
         newStats = repmat({'none'},1,length(newLabels));
 
         %% PRINT NIFTI
-        newStrct = struct();
-        newStrct.data = surfSignal;
-        newStrct.labels = newLabels;
-        newStrct.stats = newStats;
-        afni_niml_writesimple(outputFile,newStrct); 
+        outStrct = inStrct{1}; % not sure if this will cause problems
+        outStrct.data = surfSignal;
+        outStrct.labels = newLabels;
+        outStrct.stats = newStats;
+        afni_niml_writesimple(outputFile,outStrct); 
         clear surfSignal;
     end
 end
