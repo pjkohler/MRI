@@ -18,7 +18,7 @@ function roiData = mriRoiExtract(DATAfile,ROIfile,oldStyle)
     if ~oldStyle
         if ~isempty(strfind(DATAfile{1},'nii'))
             tmp = NIfTI.Read(DATAfile{1});
-            allData = tmp.data;
+            allData = squeeze(tmp.data);
             dim4 = size(allData,4);
         elseif ~isempty(strfind(DATAfile{1},'orig.BRIK'))
             [err, allData,info ] = BrikLoad(DATAfile{1});
