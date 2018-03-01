@@ -1,1 +1,0 @@
-from bids_organizer import bids_organizer 
