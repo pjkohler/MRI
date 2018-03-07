@@ -4,13 +4,15 @@ function all_tasks = MakeNimsLookup(nims_dir,json_file,init_name)
     else
     end
     sub_dirs = subfolders(nims_dir,1);
+    sub_dirs = flip(sub_dirs); % start from latest
     for s = 1:length(sub_dirs)
         run_dirs = subfolders(sub_dirs{s});
         exclude = ...
             cellfun(@(x) ~isempty(strfind(lower(x),'3plane')),run_dirs) + ...
             cellfun(@(x) ~isempty(strfind(lower(x),'asset')),run_dirs) + ...
             cellfun(@(x) ~isempty(strfind(lower(x),'screen_save')),run_dirs) + ...
-            cellfun(@(x) ~isempty(strfind(lower(x),'shim')),run_dirs);
+            cellfun(@(x) ~isempty(strfind(lower(x),'shim')),run_dirs) + ...
+            cellfun(@(x) ~isempty(strfind(lower(x),'hos_wb')),run_dirs);
         run_dirs = run_dirs(exclude == 0);
         run_nums = cellfun(@(x) split_string(x,'_',2),run_dirs,'uni',false);
         [~,sort_idx]=sort(str2double(run_nums));
@@ -54,50 +56,53 @@ function all_tasks = MakeNimsLookup(nims_dir,json_file,init_name)
         end
         task_names = {};
         run_names = inputdlg(run_dirs,sub_dirs{s},1,run_names,'on');
-        for r = 1:length(run_names)
-            if isempty(strfind(run_names{r},'sbref')) && strcmp(run_names{r}(1:4),'task')
-                cur_name = run_names{r}(6:end);
-                if isfield(count,cur_name)
-                    count.(cur_name) = count.(cur_name) + 1;
+        if ~isempty(run_names)
+            for r = 1:length(run_names)
+                if isempty(strfind(run_names{r},'sbref')) && strcmp(run_names{r}(1:4),'task')
+                    cur_name = run_names{r}(6:end);
+                    if isfield(count,cur_name)
+                        count.(cur_name) = count.(cur_name) + 1;
+                    else
+                        count.(cur_name) = 1;
+                    end
+                    if ~ismember(cur_name,task_names)
+                        task_names = cat(1,task_names);
+                    else
+                    end
+                    run_names{r} = sprintf('task-%s_run-%02d_bold',cur_name,count.(cur_name));
                 else
-                    count.(cur_name) = 1;
                 end
-                if ~ismember(cur_name,task_names)
-                    task_names = cat(1,task_names);
-                else
-                end
-                run_names{r} = sprintf('task-%s_run-%02d_bold',cur_name,count.(cur_name));
+            end
+            if length(task_names) == 1
+                init_name = task_names{1};
             else
             end
-        end
-        if length(task_names) == 1
-            init_name = task_names{1};
-        else
-        end
-        if sbref_idx ~= 0
-            for r = 1:length(sbref_idx)
-                task_runs = run_names(sbref_idx(r)+1:end);
-                task_runs = task_runs(cellfun(@(x) ~isempty(strfind(lower(x),'task')),task_runs));
-                sbref_task = split_string(task_runs{1},'_',1);
-                sbref_split = split_string(run_names{sbref_idx(r)},'_');
-                sbref_split{1} = sbref_task;
-                run_names{sbref_idx(r)} = join(sbref_split,'_');
+            if sbref_idx ~= 0
+                for r = 1:length(sbref_idx)
+                    task_runs = run_names(sbref_idx(r)+1:end);
+                    task_runs = task_runs(cellfun(@(x) ~isempty(strfind(lower(x),'task')),task_runs));
+                    sbref_task = split_string(task_runs{1},'_',1);
+                    sbref_split = split_string(run_names{sbref_idx(r)},'_');
+                    sbref_split{1} = sbref_task;
+                    run_names{sbref_idx(r)} = join(sbref_split,'_');
+                end
+            else
+            end
+            % give the user a chance to check assigned names
+            run_names = inputdlg(run_dirs,sub_dirs{s},1,run_names,'on');
+            if ~exist('all_runs','var')
+                all_runs = run_names;
+                all_dirs = run_dirs;
+                all_tasks = task_names;
+            else
+                all_runs = cat(1,all_runs,run_names);
+                all_dirs = cat(1,all_dirs,run_dirs);
+                if any(~ismember(task_names,all_tasks))
+                    all_tasks = cat(1,all_tasks,task_names(~ismember(task_names,all_tasks)));
+                else
+                end 
             end
         else
-        end
-        % give the user a chance to check assigned names
-        run_names = inputdlg(run_dirs,sub_dirs{s},1,run_names,'on');
-        if s == 1
-            all_runs = run_names;
-            all_dirs = run_dirs;
-            all_tasks = task_names;
-        else
-            all_runs = cat(1,all_runs,run_names);
-            all_dirs = cat(1,all_dirs,run_dirs);
-            if any(~ismember(task_names,all_tasks))
-                all_tasks = cat(1,all_tasks,task_names(~ismember(task_names,all_tasks)));
-            else
-            end 
         end
         clear count;
     end 
