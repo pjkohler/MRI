@@ -234,7 +234,7 @@ def bids_pe(sub_id, src_dir, dest_dir, func_dir):
 		# save pe image to bids directory
 		shutil.copyfile(pe_src, pe_dest)
 
-		# get metadata
+		# get pe metadata
 		pe_meta_dest = pe_dest.replace('.nii.gz', '.json')	
 		if not os.path.exists(pe_meta_dest):
 			try:
@@ -244,7 +244,7 @@ def bids_pe(sub_id, src_dir, dest_dir, func_dir):
 				else:
 					pe_meta_src = pe_meta_src[0]
 				func_runs = [os.sep.join(os.path.normpath(f).split(os.sep)[-3:]) for f in glob.glob(os.path.join(func_dir,'*task*bold.nii.gz'))]
-				pe_meta = get_meta(meta_file, "pe", filename, func_runs)
+				pe_meta = get_meta(pe_meta_src, "pe", filename, func_runs)
 				json.dump(pe_meta,open(pe_meta_dest,'w'))
 			except IndexError:
 				print("Metadata couldn't be created for %s" % pe_dest)
@@ -305,11 +305,8 @@ def bids_sbref(sub_id, src_dir, dest_dir):
 
 		# save sbref image to bids directory
 		shutil.copyfile(sbref_src, sbref_dest)
-		# get metadata
-		upper_dir = "/".join(dest_dir.split('/')[:-1])
-		# remove run number from meta file and place in upper dir
-		sbref_meta_dest = sbref_dest[:(sbref_dest.index('run')-1)] + '_sbref.json'
-		sbref_meta_dest = os.path.join(upper_dir,sbref_meta_file.split('/')[-1])
+		# get sbref metadata
+		sbref_meta_dest = sbref_dest.replace('.nii.gz', '.json')	
 		if not os.path.exists(sbref_meta_dest):
 			try:
 				sbref_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
@@ -376,11 +373,9 @@ def bids_task(sub_id, src_dir, dest_dir):
 					print('Current image has more time points than saved image. Overwriting...')
 		# save bold image to bids directory
 		shutil.copyfile(task_src, task_dest)
-		# get epi metadata
-		upper_dir = "/".join(dest_dir.split('/')[:-1])
-		# remove run number from meta file and place in upper dir
-		task_meta_dest = task_dest[:(task_dest.index('run')-1)] + '_bold.json'
-		task_meta_dest = os.path.join(upper_dir,task_meta_dest.split('/')[-1])
+		
+		# get task metadata
+		task_meta_dest = task_dest.replace('.nii.gz', '.json')	
 
 		if not os.path.exists(task_meta_dest):
 			task_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
@@ -424,6 +419,7 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 	Returns BIDS meta data for bold 
 	"""
 	if '.nii' in meta_file:
+		print 'using nifti'
 		descrip = nib.load(meta_file).header['descrip'].tostring() 
 		if 'mux' in descrip:
 			mux = int(descrip[descrip.index('mux=')+4:].split(';')[0])
@@ -433,21 +429,15 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 			mux = int(1)
 		n_echoes = descrip[descrip.index('acq=')+4:].split(';')[0]
 		n_echoes = int(n_echoes.split(',')[1].replace(']',''))
-		echo_spacing = float(descrip[descrip.index('ec=')+3:].split(';')[0])
-		if echo_spacing > .1:
-			# assume echo_spacing is expressed in ms
-			echo_spacing = echo_spacing / 1000
-		echo_time = float(descrip[descrip.index('te=')+3:].split(';')[0])
-		if echo_time > .1:
-			# assume echo_time is expressed in ms
-			echo_time = echo_time / 1000
+		# echo_time and echo spacing in nifti header is expressed in ms
+		echo_spacing = float(descrip[descrip.index('ec=')+3:].split(';')[0]) / 1000
+		echo_time = float(descrip[descrip.index('te=')+3:].split(';')[0]) / 1000
 		flip_angle = float(descrip[descrip.index('fa=')+3:].split(';')[0])
 		# note, mux factor has already been incorporated in slice count
 		n_slices = int(nib.load(meta_file).header['dim'][3])
 		tr = float(nib.load(meta_file).header['pixdim'][4])
-		#phase_dir = bin(nib.load(meta_file).header['dim_info'])
-		#phase_dir = int(phase_dir[len(phase_dir)/2:],2)
-		phase_dir = 1
+		phase_dir = bin(nib.load(meta_file).header['dim_info'])
+		phase_dir = int(phase_dir[len(phase_dir)/2 : (len(phase_dir)/2+2)],2) 
 		pe_polar = descrip[descrip.index('pe=')+3:].split(';')[0]
 		if '0' in pe_polar:
 			phase_sign = '-'
@@ -587,11 +577,9 @@ def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None):
 		success = False
 	else:
 		success = True
-		print("********************************************")
 		print("BIDSifying %s" % orig_dir)
 		print("Using temp path %s" % temp_dir)
 		print("Using nims path: %s" % out_dir)
-		print("********************************************")
 		base_file_id = sub_id + '_' + ses_id
 		# split subject path into a super subject path and a session path
 		os.makedirs(temp_dir)
@@ -716,20 +704,21 @@ def bids_organizer(
 	# bidsify all subjects in path
 	for nims_file in sorted(nims_dirs):
 		temp_subj  = get_subj_path(nims_file, temp_dir, id_correction)
+		print("*******************************************************************")
 		if temp_subj == None:
 			print("Skipping %s" % nims_file)
 			continue
 		success = bids_subj(nims_file, temp_subj, out_dir, deface, run_correction)
 		# move files
-		if success:
+		if success: 
 			err = rsync(temp_dir, out_dir)
-			if err != None:
-				success = False
-		if success == True and record != None:
-			with open(record, 'a') as f:
-				f.write(nims_file)  
-				f.write('\n')
+			if err != None: success = False
+			if success: 
 				print('Successfully transferred %s' % nims_file)
+				if record != None:
+					with open(record, 'a') as f:
+						f.write(nims_file)  
+						f.write('\n')
 	# remove temp folder
 	shutil.rmtree(temp_dir)
 
