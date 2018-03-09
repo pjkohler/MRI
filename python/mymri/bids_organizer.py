@@ -674,7 +674,7 @@ def bids_organizer(
 	# directories to BIDSify
 	nims_dirs = sorted(get_subdir(study_dir),reverse=True)
 	if run_all is False:
-		nims_dirs = nims_dirs[0]
+		nims_dirs = [nims_dirs[0]]
 	# get temporary directory to save bids in
 	temp_dir = os.path.join(temp_dir,study_id)
 	if os.path.isdir(temp_dir):
