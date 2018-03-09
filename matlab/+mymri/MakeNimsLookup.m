@@ -1,17 +1,17 @@
-function all_tasks = MakeNimsLookup(nims_dir,study,skip_renaming,init_name)
-    if nargin < 4
+function all_tasks = MakeNimsLookup(nims_dir,skip_renaming,init_name)
+    if nargin < 3
         init_name = 'TASKNAME';
     else
     end
-    if nargin < 3
+    if nargin < 2
         skip_renaming = false;
     else
     end
-    if nargin < 2
-        mat_file = sprintf('/Volumes/svndl/RAW_DATA/correction_files/untitled_correction.mat');
-    else
-        mat_file = sprintf('/Volumes/svndl/RAW_DATA/correction_files/%s_correction.mat',study);
-    end
+    
+    study = split_string(nims_dir,'/');
+    study = study{end};
+    
+    mat_file = sprintf('/Volumes/svndl/RAW_DATA/correction_files/%s_correction.mat',study);
     if exist(mat_file,'file')
         json_data = load(mat_file);
     else
@@ -83,7 +83,7 @@ function all_tasks = MakeNimsLookup(nims_dir,study,skip_renaming,init_name)
                         run_names{r} = sprintf('run-%02d_T2w',count.T2);
                     elseif ~isempty(strfind(lower(run_dirs{r}),'dti')) || ~isempty(strfind(lower(run_dirs{r}),'dwi'))
                         count.DTI = count.DTI + 1;
-                        run_names{r} = sprintf('run-%02d_acq-96dir_dwi',count.DTI);  
+                        run_names{r} = sprintf('acq-96dir_run-%02d_dwi',count.DTI);  
                     elseif ~isempty(strfind(lower(run_dirs{r}),'fieldmap')) || ~isempty(strfind(lower(run_dirs{r}),'fmap'))
                         count.fieldmap = count.fieldmap + 1;
                         run_names{r} = sprintf('run-%02d_fieldmap',count.fieldmap);  
