@@ -31,7 +31,11 @@ function all_tasks = MakeNimsLookup(nims_dir,study,skip_renaming,init_name)
             if isfield(json_data, ['session_',session_id])
                 sub_id = json_data.(['session_',session_id]).sub_id;
             else
-                sub_id = {'0000'};
+                sub_id = '0000';
+            end
+            if ~iscell(sub_id)
+                sub_id = {sub_id};
+            else
             end
             sub_id = inputdlg(session_id,'sub ID?',1,sub_id);
             if isempty(sub_id) || strcmp(sub_id,'0000')
@@ -88,7 +92,7 @@ function all_tasks = MakeNimsLookup(nims_dir,study,skip_renaming,init_name)
                     end
                 end
                 task_names = {};
-                run_names = inputdlg(run_dirs,sub_dirs{s},1,run_names,'on');
+                run_names = inputdlg(run_dirs,['session_',session_id],1,run_names,'on');
                 count.pe1 = 0;
                 if ~isempty(run_names)
                     for r = 1:length(run_names)
@@ -132,8 +136,8 @@ function all_tasks = MakeNimsLookup(nims_dir,study,skip_renaming,init_name)
                 run_names = json_data.(['session_',session_id]).run_names;
             end
             % give the user a chance to check assigned names
-            run_names = inputdlg(run_dirs,sub_dirs{s},1,run_names,'on');
-            if exist('json_data','var')
+            run_names = inputdlg(run_dirs,['session_',session_id],1,run_names,'on');
+            if ~isempty(json_data)
                 json_data.(['session_',session_id]).sub_id = sub_id;
             else
                 json_data = struct(['session_',session_id],struct('sub_id',sub_id));
@@ -167,18 +171,23 @@ function all_tasks = MakeNimsLookup(nims_dir,study,skip_renaming,init_name)
     id_p = fopen(id_file,'w');
     run_p = fopen(run_file,'w');
     
-    sessions = fieldnames(json_data);
+    sessions = flip(fieldnames(json_data));
     for s = 1:length(sessions)
         if s == 1
             fprintf(id_p,'{\n');
             fprintf(run_p,'{\n');
         else
         end
+        cur_id = json_data.(sessions{s}).sub_id;
+        if iscell(cur_id)
+            cur_id = cur_id{:};
+        else
+        end
         if s == length(sessions)
-            fprintf(id_p,'\t"%s": "%s"\n',sessions{s}(9:end),json_data.(sessions{s}).sub_id{:});
+            fprintf(id_p,'\t"%s": "%s"\n',sessions{s}(9:end),cur_id);
             fprintf(id_p,'}\n');
         else
-            fprintf(id_p,'\t"%s": "%s",\n',sessions{s}(9:end),json_data.(sessions{s}).sub_id{:});
+            fprintf(id_p,'\t"%s": "%s",\n',sessions{s}(9:end),cur_id);
         end
         cur_dirs = json_data.(sessions{s}).run_dirs;
         cur_names = json_data.(sessions{s}).run_names;
