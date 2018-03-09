@@ -111,7 +111,7 @@ def bids_fmap(sub_id, src_dir, dest_dir, func_dir):
 					else:
 						fmap_meta_src = dti_meta_src[0]
 					func_runs = [os.sep.join(os.path.normpath(f).split(os.sep)[-3:]) for f in glob.glob(os.path.join(func_dir,'*task*bold.nii.gz'))]
-					fmap_meta = get_meta(fmap_meta_src, "fmap",'',func_runs)
+					fmap_meta = get_meta(fmap_meta_src, "fieldmap",'',func_runs)
 					json.dump(fmap_meta,open(fmap_meta_dest,'w'))
 				except IndexError:
 					print("Metadata couldn't be created for %s" % fmap_dest)	
@@ -419,7 +419,6 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 	Returns BIDS meta data for bold 
 	"""
 	if '.nii' in meta_file:
-		print 'using nifti'
 		descrip = nib.load(meta_file).header['descrip'].tostring() 
 		if 'mux' in descrip:
 			mux = int(descrip[descrip.index('mux=')+4:].split(';')[0])
@@ -438,11 +437,15 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 		tr = float(nib.load(meta_file).header['pixdim'][4])
 		phase_dir = bin(nib.load(meta_file).header['dim_info'])
 		phase_dir = int(phase_dir[len(phase_dir)/2 : (len(phase_dir)/2+2)],2) 
-		pe_polar = descrip[descrip.index('pe=')+3:].split(';')[0]
-		if '0' in pe_polar:
-			phase_sign = '-'
+		if 'pe' in descrip:
+			pe_polar = descrip[descrip.index('pe=')+3:].split(';')[0]
+			if '0' in pe_polar:
+				phase_sign = '-'
+			else:
+				phase_sign = ''
 		else:
-			phase_sign = ''
+			# if no pe field, assume pe=0
+			phase_sign = '-'
 	else:
 		meta_in = json.load(open(meta_file,'r'))
 		mux = meta_in['num_bands']
@@ -579,7 +582,7 @@ def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None):
 		success = True
 		print("BIDSifying %s" % orig_dir)
 		print("Using temp path %s" % temp_dir)
-		print("Using nims path: %s" % out_dir)
+		print("Using bids path: %s" % out_dir)
 		base_file_id = sub_id + '_' + ses_id
 		# split subject path into a super subject path and a session path
 		os.makedirs(temp_dir)
