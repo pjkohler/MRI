@@ -589,6 +589,7 @@ def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None):
 		anat_temp = mkdir(os.path.join(temp_dir,'anat'))
 		func_temp = mkdir(os.path.join(temp_dir,'func'))
 		fmap_temp = mkdir(os.path.join(temp_dir,'fmap'))
+		dti_temp = mkdir(os.path.join(temp_dir,'dwi'))
 
 		if run_correction is None:
 			task_origs = sorted(glob.glob(os.path.join(orig_dir,'*task*')))[::-1]
