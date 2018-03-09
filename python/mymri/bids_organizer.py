@@ -102,7 +102,7 @@ def bids_fmap(sub_id, src_dir, dest_dir, func_dir):
 			shutil.copyfile(fmap_src, fmap_dest)
 			shutil.copyfile(mag_src, mag_dest)
 			# get metadata
-			fmap_meta_dest = os.path.join(dest_dir, sub_id + '_fieldmap.json')
+			fmap_meta_dest = fmap_dest.replace('.nii.gz', '.json')	
 			if not os.path.exists(fmap_meta_dest):
 				try:
 					fmap_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
@@ -469,6 +469,7 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 		meta_out['RepetitionTime'] = tr
 	elif (scan_type == 'fieldmap'):
 		meta_out['IntendedFor'] = intended_list
+		meta_out['Units'] = 'Hz'
 	elif (scan_type == 'pe'):
 		meta_out['RepetitionTime'] = tr
 		meta_out['IntendedFor'] = intended_list
@@ -671,9 +672,9 @@ def bids_organizer(
 	out_dir = os.path.join(bids_dir,study_id)
 	mkdir(out_dir)
 	# directories to BIDSify
-	nims_dirs = get_subdir(study_dir)
+	nims_dirs = sorted(get_subdir(study_dir),reverse=True)
 	if run_all is False:
-		nims_dirs = nims_dirs[-1:]
+		nims_dirs = nims_dirs[0]
 	# get temporary directory to save bids in
 	temp_dir = os.path.join(temp_dir,study_id)
 	if os.path.isdir(temp_dir):
@@ -706,7 +707,7 @@ def bids_organizer(
 	json.dump(header,open(os.path.join(temp_dir, 'dataset_description.json'),'w'))
 
 	# bidsify all subjects in path
-	for nims_file in sorted(nims_dirs):
+	for nims_file in nims_dirs:
 		temp_subj  = get_subj_path(nims_file, temp_dir, id_correction)
 		print("*******************************************************************")
 		if temp_subj == None:
