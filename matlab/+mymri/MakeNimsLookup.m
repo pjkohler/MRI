@@ -1,16 +1,17 @@
-function all_tasks = MakeNimsLookup(nims_dir,skip_renaming,init_name)
+function MakeNimsLookup(nims_dir,skip_renaming,init_cond,study)
+    if nargin < 4
+        study = split_string(nims_dir,'/');
+        study = study{end};
+    else
+    end
     if nargin < 3
-        init_name = 'TASKNAME';
+        init_cond = 'TASKNAME';
     else
     end
     if nargin < 2
         skip_renaming = false;
     else
     end
-    
-    study = split_string(nims_dir,'/');
-    study = study{end};
-    
     mat_file = sprintf('/Volumes/svndl/RAW_DATA/correction_files/%s_correction.mat',study);
     if exist(mat_file,'file')
         json_data = load(mat_file);
@@ -71,7 +72,7 @@ function all_tasks = MakeNimsLookup(nims_dir,skip_renaming,init_name)
                     elseif ~isempty(strfind(run_dirs{r},'sbref'))
                         count.sbref = count.sbref + 1;
                         sbref_idx(count.sbref) = r;
-                        run_names{r} = sprintf('task-%s_run-%02d_sbref',init_name,count.sbref);
+                        run_names{r} = sprintf('task-%s_run-%02d_sbref',init_cond,count.sbref);
                     elseif ~isempty(strfind(run_dirs{r},'inplane'))
                         count.inplane = count.inplane + 1;
                         run_names{r} = sprintf('run-%02d_inplaneT1',count.inplane);
@@ -88,7 +89,7 @@ function all_tasks = MakeNimsLookup(nims_dir,skip_renaming,init_name)
                         count.fieldmap = count.fieldmap + 1;
                         run_names{r} = sprintf('run-%02d_fieldmap',count.fieldmap);  
                     else
-                        run_names{r} = sprintf('task-%s',init_name);
+                        run_names{r} = sprintf('task-%s',init_cond);
                     end
                 end
                 task_names = {};
@@ -114,7 +115,7 @@ function all_tasks = MakeNimsLookup(nims_dir,skip_renaming,init_name)
                         end
                     end
                     if length(task_names) == 1
-                        init_name = task_names{1};
+                        init_cond = task_names{1};
                     else
                     end
                     if sbref_idx ~= 0
