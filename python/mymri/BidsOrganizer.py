@@ -645,7 +645,8 @@ def get_subdir(a_dir):
 		if os.path.isdir(os.path.join(a_dir, name))]
 
 def BidsOrganizer(
-	study_dir, 
+	study_dir,
+	study_id=None,
 	id_correction=None, 
 	run_correction=None, 
 	record=None, 
@@ -675,7 +676,8 @@ def BidsOrganizer(
 		return
 	
 	#study name
-	study_id = study_dir.split('/')[-1]
+	if study_id is None:
+		study_id = study_dir.split('/')[-1]
 	# output directory
 	out_dir = os.path.join(bids_dir,study_id)
 	mkdir(out_dir)
