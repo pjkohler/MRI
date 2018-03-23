@@ -646,10 +646,10 @@ def get_subdir(a_dir):
 
 def BidsOrganizer(
 	study_dir,
-	study_id=None,
 	id_correction=None, 
 	run_correction=None, 
 	record=None, 
+	study_id=None,
 	bids_dir='/Volumes/svndl/RAW_DATA/MRI_RAW', 
 	temp_dir='/Volumes/Denali_4D2/TEMP',
 	run_all=False, 
