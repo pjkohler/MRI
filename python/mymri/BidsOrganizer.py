@@ -14,12 +14,17 @@ import tarfile
 # *****************************
 # *** HELPER FUNCTIONS
 # *****************************
-def bids_anat(sub_id, src_dir, dest_dir, deface=True):
+def bids_anat(sub_id, src_dir, dest_dir, deface=True, update_metadata=False):
 	"""
 	Moves and converts a anatomical folder associated with a T1 or T2
 	to BIDS format. Assumes files are named appropriately
 	(e.g. "[examinfo]_anat_[T1w,T2w]")
 	"""
+
+	if update_metadata:
+		# no metadata for anats, so return immediately
+		return
+
 	if isinstance(src_dir, dict):
 		# use dictionary, define list of destination files and list of source folders
 		corr_name = [os.path.join(dest_dir, sub_id + '_' + x + '.nii.gz') for x in src_dir.values()]
@@ -66,7 +71,7 @@ def bids_anat(sub_id, src_dir, dest_dir, deface=True):
 		else:
 			print('Did not save anat because %s already exists!' % anat_dest)
 
-def bids_fmap(sub_id, src_dir, dest_dir, func_dir):
+def bids_fmap(sub_id, src_dir, dest_dir, func_dir, update_metadata=False):
 	"""
 	Moves and converts an epi folder associated with a fieldmap
 	to BIDS format. Assumes files are named appropriately
@@ -98,27 +103,26 @@ def bids_fmap(sub_id, src_dir, dest_dir, func_dir):
 
 		print('\t' +  "/".join(fmap_src.split('/')[-4:]) + ' to\n\t' +  "/".join(fmap_dest.split('/')[-5:]) )
 
-		if not os.path.exists(fmap_dest):
+		if not update_metadata:
 			shutil.copyfile(fmap_src, fmap_dest)
 			shutil.copyfile(mag_src, mag_dest)
-			# get metadata
-			fmap_meta_dest = fmap_dest.replace('.nii.gz', '.json')	
-			if not os.path.exists(fmap_meta_dest):
-				try:
-					fmap_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
-					if not fmap_meta_src:
-						fmap_meta_src = fmap_src
-					else:
-						fmap_meta_src = dti_meta_src[0]
-					func_runs = [os.sep.join(os.path.normpath(f).split(os.sep)[-3:]) for f in glob.glob(os.path.join(func_dir,'*task*bold.nii.gz'))]
-					fmap_meta = get_meta(fmap_meta_src, "fieldmap",'',func_runs)
-					json.dump(fmap_meta,open(fmap_meta_dest,'w'))
-				except IndexError:
-					print("Metadata couldn't be created for %s" % fmap_dest)	
-		else:
-			print('Did not save fmap_epi because %s already exists!' % fmap_dest)
 
-def bids_dti(sub_id, src_dir, dest_dir):
+		# get metadata
+		fmap_meta_dest = fmap_dest.replace('.nii.gz', '.json')	
+		if not os.path.exists(fmap_meta_dest):
+			try:
+				fmap_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
+				if not fmap_meta_src:
+					fmap_meta_src = fmap_src
+				else:
+					fmap_meta_src = dti_meta_src[0]
+				func_runs = [os.sep.join(os.path.normpath(f).split(os.sep)[-3:]) for f in glob.glob(os.path.join(func_dir,'*task*bold.nii.gz'))]
+				fmap_meta = get_meta(fmap_meta_src, "fieldmap",'',func_runs)
+				json.dump(fmap_meta,open(fmap_meta_dest,'w'))
+			except IndexError:
+				print("Metadata couldn't be created for %s" % fmap_dest)
+
+def bids_dti(sub_id, src_dir, dest_dir, update_metadata=False):
 	"""
 	Moves and converts an epi folder associated with a fieldmap
 	to BIDS format. Assumes files are named appropriately
@@ -159,27 +163,27 @@ def bids_dti(sub_id, src_dir, dest_dir):
 		
 		print('\t' +  "/".join(dti_src.split('/')[-4:]) + ' to\n\t' +  "/".join(dti_dest.split('/')[-5:]) )
 
-		if not os.path.exists(dti_dest):
+		if not update_metadata:
 			shutil.copyfile(dti_src, dti_dest)
 			shutil.copyfile(bval_src, bval_dest)
 			shutil.copyfile(bvec_src, bvec_dest)
-			# get metadata
-			dti_meta_dest = dti_dest.replace('.nii.gz', '.json')	
-			if not os.path.exists(dti_meta_dest):
-				try:
-					dti_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
-					if not dti_meta_src:
-						dti_meta_src = dti_src
-					else:
-						dti_meta_src = dti_meta_src[0]
-					dti_meta = get_meta(dti_meta_src, "dti")
-					json.dump(dti_meta,open(dti_meta_dest,'w'))
-				except IndexError:
-					print("Metadata couldn't be created for %s" % dti_dest)
-		else:
-			print('Did not save dti because %s already exists!' % dti_dest)
+
+		# get metadata
+		dti_meta_dest = dti_dest.replace('.nii.gz', '.json')	
+		if not os.path.exists(dti_meta_dest):
+			try:
+				dti_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
+				if not dti_meta_src:
+					dti_meta_src = dti_src
+				else:
+					dti_meta_src = dti_meta_src[0]
+				dti_meta = get_meta(dti_meta_src, "dti")
+				json.dump(dti_meta,open(dti_meta_dest,'w'))
+			except IndexError:
+				print("Metadata couldn't be created for %s" % dti_dest)
 		
-def bids_pe(sub_id, src_dir, dest_dir, func_dir):
+		
+def bids_pe(sub_id, src_dir, dest_dir, func_dir, update_metadata=False):
 	"""
 	Moves and converts an epi folder associated with an 
 	alternative phase encoding direction to BIDS format. 
@@ -218,21 +222,22 @@ def bids_pe(sub_id, src_dir, dest_dir, func_dir):
 
 		print('\t' +  "/".join(pe_src.split('/')[-4:]) + ' to\n\t' +  "/".join(pe_dest.split('/')[-5:]) )
 
-		# check if file exists. If it does, check if the saved file has more time points
-		if os.path.exists(pe_dest):
-			print('%s already exists!' % pe_dest)
-			saved_shape = nib.load(pe_src).shape
-			current_shape = nib.load(pe_dest).shape
-			print('Dimensions of saved image: %s' % list(saved_shape))
-			print('Dimensions of current image: %s' % list(current_shape))
-			if (current_shape[-1] <= saved_shape[-1]):
-				print('Current image has fewer or equivalent time points than saved image. Exiting...')
-				return
-			else:
-				print('Current image has more time points than saved image. Overwriting...')
-	
-		# save pe image to bids directory
-		shutil.copyfile(pe_src, pe_dest)
+		if not update_metadata:
+			# check if file exists. If it does, check if the saved file has more time points
+			if os.path.exists(pe_dest):
+				print('%s already exists!' % pe_dest)
+				saved_shape = nib.load(pe_src).shape
+				current_shape = nib.load(pe_dest).shape
+				print('Dimensions of saved image: %s' % list(saved_shape))
+				print('Dimensions of current image: %s' % list(current_shape))
+				if (current_shape[-1] <= saved_shape[-1]):
+					print('Current image has fewer or equivalent time points than saved image. Exiting...')
+					return
+				else:
+					print('Current image has more time points than saved image. Overwriting...')
+		
+			# save pe image to bids directory
+			shutil.copyfile(pe_src, pe_dest)
 
 		# get pe metadata
 		pe_meta_dest = pe_dest.replace('.nii.gz', '.json')	
@@ -249,7 +254,7 @@ def bids_pe(sub_id, src_dir, dest_dir, func_dir):
 			except IndexError:
 				print("Metadata couldn't be created for %s" % pe_dest)
 
-def bids_sbref(sub_id, src_dir, dest_dir):
+def bids_sbref(sub_id, src_dir, dest_dir, update_metadata=False):
 	"""
 	Moves and converts an epi folder associated with a sbref
 	calibration scan to BIDS format. Assumes tasks are named appropriately
@@ -290,21 +295,23 @@ def bids_sbref(sub_id, src_dir, dest_dir):
 
 		print('\t' +  "/".join(sbref_src.split('/')[-4:]) + ' to\n\t' +  "/".join(sbref_dest.split('/')[-5:]) )
 
-		# check if file exists. If it does, check if the saved file has more time points
-		if os.path.exists(sbref_dest):
-			print('%s already exists!' % sbref_dest)
-			saved_shape = nib.load(sbref_dest).shape
-			current_shape = nib.load(sbref_src).shape
-			print('Dimensions of saved image: %s' % list(saved_shape))
-			print('Dimensions of current image: %s' % list(current_shape))
-			if (current_shape[-1] <= saved_shape[-1]):
-				print('Current image has fewer or equivalent time points than saved image. Exiting...')
-				return
-			else:
-				print('Current image has more time points than saved image. Overwriting...')
+		if not update_metadata:
+			# check if file exists. If it does, check if the saved file has more time points
+			if os.path.exists(sbref_dest):
+				print('%s already exists!' % sbref_dest)
+				saved_shape = nib.load(sbref_dest).shape
+				current_shape = nib.load(sbref_src).shape
+				print('Dimensions of saved image: %s' % list(saved_shape))
+				print('Dimensions of current image: %s' % list(current_shape))
+				if (current_shape[-1] <= saved_shape[-1]):
+					print('Current image has fewer or equivalent time points than saved image. Exiting...')
+					return
+				else:
+					print('Current image has more time points than saved image. Overwriting...')
 
-		# save sbref image to bids directory
-		shutil.copyfile(sbref_src, sbref_dest)
+			# save sbref image to bids directory
+			shutil.copyfile(sbref_src, sbref_dest)
+		
 		# get sbref metadata
 		sbref_meta_dest = sbref_dest.replace('.nii.gz', '.json')	
 		if not os.path.exists(sbref_meta_dest):
@@ -319,7 +326,7 @@ def bids_sbref(sub_id, src_dir, dest_dir):
 			except IndexError:
 				print("Metadata couldn't be created for %s" % sbref_file)
 
-def bids_task(sub_id, src_dir, dest_dir):
+def bids_task(sub_id, src_dir, dest_dir, update_metadata=False):
 	"""
 	Moves and converts an epi folder associated with a task
 	to BIDS format. Assumes tasks are named appropriately
@@ -359,36 +366,25 @@ def bids_task(sub_id, src_dir, dest_dir):
 
 		print('\t' +  "/".join(task_src.split('/')[-4:]) + ' to\n\t' +  "/".join(task_dest.split('/')[-5:]) )
 
-		# check if file exists. If it does, check if the saved file has more time points
-		if os.path.exists(task_dest):
-			print('%s already exists!' % task_dest)
-			saved_shape = nib.load(task_src).shape
-			current_shape = nib.load(task_dest).shape
-			print('Dimensions of saved image: %s' % list(saved_shape))
-			print('Dimensions of current image: %s' % list(current_shape))
-			if (current_shape[-1] <= saved_shape[-1]):
-					print('Current image has fewer or equal time points than saved image. Exiting...')
-					return
-			else:
-					print('Current image has more time points than saved image. Overwriting...')
-		# save bold image to bids directory
-		shutil.copyfile(task_src, task_dest)
-		
-		# get task metadata
-		task_meta_dest = task_dest.replace('.nii.gz', '.json')	
+		if not update_metadata:
+			# check if file exists. If it does, check if the saved file has more time points
+			if os.path.exists(task_dest):
+				print('%s already exists!' % task_dest)
+				saved_shape = nib.load(task_src).shape
+				current_shape = nib.load(task_dest).shape
+				print('Dimensions of saved image: %s' % list(saved_shape))
+				print('Dimensions of current image: %s' % list(current_shape))
+				if (current_shape[-1] <= saved_shape[-1]):
+						print('Current image has fewer or equal time points than saved image. Exiting...')
+						return
+				else:
+						print('Current image has more time points than saved image. Overwriting...')
+			# save bold image to bids directory
+			shutil.copyfile(task_src, task_dest)
 
-		if not os.path.exists(task_meta_dest):
-			task_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
-			if not task_meta_src:
-				task_meta_src = task_src
-			else:
-				task_meta_src = task_meta_src[0]
-			task_meta = get_meta(task_meta_src, "task", taskname)
-			json.dump(task_meta,open(task_meta_dest,'w'))
-
-		# get physio if it exists
-		physio_file = glob.glob(os.path.join(cur_src, '*physio.tgz'))
-		if len(physio_file)>0:
+			# get physio if it exists
+			physio_file = glob.glob(os.path.join(cur_src, '*physio.tgz'))
+			if len(physio_file)>0:
 				assert len(physio_file)==1, ("More than one physio file found in directory %s" % cur_src)
 				tar = tarfile.open(physio_file[0])
 				tar.extractall(dest_dir)
@@ -401,6 +397,17 @@ def bids_task(sub_id, src_dir, dest_dir):
 						f = np.loadtxt(pfile)
 						np.savetxt(new_physio_file, f, delimiter = '\t')
 				shutil.rmtree(os.path.join(dest_dir, physio_file))
+		
+		# get task metadata
+		task_meta_dest = task_dest.replace('.nii.gz', '.json')	
+		if not os.path.exists(task_meta_dest):
+			task_meta_src = [x for x in glob.glob(os.path.join(cur_src,'*.json')) if 'qa' not in x]
+			if not task_meta_src:
+				task_meta_src = task_src
+			else:
+				task_meta_src = task_meta_src[0]
+			task_meta = get_meta(task_meta_src, "task", taskname)
+			json.dump(task_meta,open(task_meta_dest,'w'))
 
 def cleanup(path):
 	for f in glob.glob(os.path.join(path, '*')):
@@ -436,7 +443,7 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 		n_slices = int(nib.load(meta_file).header['dim'][3])
 		tr = float(nib.load(meta_file).header['pixdim'][4])
 		phase_dir = bin(nib.load(meta_file).header['dim_info'])
-		phase_dir = int(phase_dir[len(phase_dir)/2 : (len(phase_dir)/2+2)],2) 
+		phase_dir = int(phase_dir[len(phase_dir)/2 : (len(phase_dir)/2+2)],2)
 		if 'pe' in descrip:
 			pe_polar = descrip[descrip.index('pe=')+3:].split(';')[0]
 			if '0' in pe_polar:
@@ -562,7 +569,7 @@ def rsync(input, output):
 # *****************************
 # *** Main BIDS function
 # *****************************
-def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None):
+def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None, update_metadata=False):
 	"""
 	Takes 
 		orig_dir (the path to the subject's data directory in the original format, on nims or elsewhere) 
@@ -576,7 +583,7 @@ def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None):
 	ses_id = [x for x in split_dir if 'ses' in x][0]
 	out_dir = os.path.join(out_dir,sub_id,ses_id)
 
-	if os.path.exists(out_dir):
+	if os.path.exists(out_dir) and not update_metadata:
 		print("Path %s already exists. Skipping." % out_dir)
 		success = False
 	else:
@@ -610,34 +617,34 @@ def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None):
 			dti_origs = {os.path.join(orig_dir,k):v for k,v in run_filtered.items() if 'dwi' in v}
 
 		# anat files
-		if anat_origs: bids_anat(base_file_id, anat_origs, anat_temp, deface)
+		if anat_origs: bids_anat(base_file_id, anat_origs, anat_temp, deface, update_metadata)
 
 		# task files
-		if task_origs: bids_task(base_file_id, task_origs, func_temp)
+		if task_origs: bids_task(base_file_id, task_origs, func_temp, update_metadata)
 
 		# sbref files
-		if sbref_origs: bids_sbref(base_file_id, sbref_origs, func_temp)
+		if sbref_origs: bids_sbref(base_file_id, sbref_origs, func_temp, update_metadata)
 			
 		cleanup(func_temp)
 		cleanup(anat_temp)
 
 		# pe files. note, using fmap path
-		if pe_origs: bids_pe(base_file_id, pe_origs, fmap_temp, func_temp)
+		if pe_origs: bids_pe(base_file_id, pe_origs, fmap_temp, func_temp, update_metadata)
 
 		# fmap files
-		if fmap_origs: bids_fmap(base_file_id, fmap_origs, fmap_temp, func_temp)
+		if fmap_origs: bids_fmap(base_file_id, fmap_origs, fmap_temp, func_temp, update_metadata)
 
 		cleanup(fmap_temp)
 
 		# fmap files
-		if dti_origs: bids_dti(base_file_id, dti_origs, dti_temp)
+		if dti_origs: bids_dti(base_file_id, dti_origs, dti_temp, update_metadata)
 
 		return success
 def get_subdir(a_dir):
 	return [os.path.join(a_dir, name) for name in os.listdir(a_dir)
 		if os.path.isdir(os.path.join(a_dir, name))]
 
-def bids_organizer(
+def BidsOrganizer(
 	study_dir, 
 	id_correction=None, 
 	run_correction=None, 
@@ -645,7 +652,8 @@ def bids_organizer(
 	bids_dir='/Volumes/svndl/RAW_DATA/MRI_RAW', 
 	temp_dir='/Volumes/Denali_4D2/TEMP',
 	run_all=False, 
-	deface=False):
+	deface=False,
+	update_metadata=False):
 	# *****************************
 	# *** Constant Variables
 	# *****************************
@@ -713,7 +721,7 @@ def bids_organizer(
 		if temp_subj == None:
 			print("Skipping %s" % nims_file)
 			continue
-		success = bids_subj(nims_file, temp_subj, out_dir, deface, run_correction)
+		success = bids_subj(nims_file, temp_subj, out_dir, deface, run_correction, update_metadata)
 		# move files
 		if success: 
 			err = rsync(temp_dir, out_dir)
