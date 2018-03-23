@@ -488,7 +488,7 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 	else:
 		raise ValueError("get_meta: unknown type %s." % scan_type)
 	# meta data for all types 
-	meta_out['PhaseEncodingDirection'] = ['i','j','k'][phase_dir] + phase_sign   
+	meta_out['PhaseEncodingDirection'] = ['i','j','k'][phase_dir-1] + phase_sign   
 	meta_out['EffectiveEchoSpacing'] = echo_spacing
 	meta_out['EchoTime'] = echo_time
 	meta_out['TotalReadoutTime'] = total_time
