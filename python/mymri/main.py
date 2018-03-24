@@ -1,4 +1,4 @@
-import os, subprocess, sys, glob, shutil
+import os, subprocess, sys, glob, shutil, tempfile
 from os.path import expanduser
 
 ## HELPER FUNCTIONS
@@ -52,6 +52,19 @@ def get_name_suffix(cur_file,surface=False):
     
     return file_name, suffix
 
+def rsync(input, output):
+    cmd = "rsync -avz --progress --remove-source-files %s/* %s/." % (input, output)
+    p = subprocess.Popen(cmd, shell=True)
+    stdout, stderr = p.communicate()
+    return stderr
+
+def shell_cmd(main_cmd, fsdir=None, do_print=False):
+    if fsdir is not None:
+        main_cmd = "export SUBJECTS_DIR={0}; {1}".format(fsdir, main_cmd)
+    if do_print:
+        print main_cmd
+    subprocess.call("{0}".format(main_cmd), shell=True)
+     
 ## MAIN FUNCTIONS
 
 def Suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=False, fs_dir=None): 
@@ -408,4 +421,123 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
     if keeptemp is not True:
         # remove temporary directory
         shutil.rmtree(tmp_dir) 
+
+def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False):
+    """
+    Function for generating V1-V3 ROIs in subject's native space 
+    predicted from the cortical surface anatomy
+    as described in Benson et al. (PLoS Comput Biol., 2014).
+    Requires template data, which can be downloaded at:
+    https://cfn.upenn.edu/aguirre/wiki/public:retinotopy_template
+
+    Author: pjkohler, Stanford University, 2016
+    """
+
+    if fsdir is None:
+        fsdir = os.environ["SUBJECTS_DIR"]
+
+    if atlasdir is None:
+        atlasdir = "{0}/ROI_TEMPLATES".format(fsdir)
+
+    # get current directory    
+    curdir = os.getcwd()
+
+    for sub in subjects: # loop over list of subjects
+        # check if subjects' freesurfer directory exists
+        if os.path.isdir("{0}/{1}".format(fsdir,sub)):
+            # no suffix needed
+            suffix=""
+        elif os.path.isdir("{0}/sub-{1}".format(fsdir,sub)):
+            sub = "sub-{0}".format(sub)
+            suffix=""
+        else:
+            # suffix needed
+            suffix="_fs4"
+            if not os.path.isdir("{0}/{1}{2}".format(fsdir,sub,suffix)):
+                sys.exit("ERROR!\nSubject folder {0}/{1} \ndoes not exist, without or with suffix '{2}'."
+                    .format(fsdir,sub,suffix))        
+        
+        if outdir in "standard":
+            outdir = "{0}/{1}{2}/TEMPLATE_ROIS".format(fsdir,sub,suffix)
+        else:
+            outdir = "{0}/{1}/TEMPLATE_ROIS".format(outdir,sub,suffix) # force sub in name, in case multiple subjects
+    
+        # make temporary, local folder
+        tmpdir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))
+        # and subfoldes
+        os.mkdir(tmpdir+"/surf")
+        os.mkdir(tmpdir+"/TEMPLATE_ROIS")
+        
+        # copy relevant freesurfer files
+        surfdir = "{0}/{1}{2}/surf".format(fsdir,sub,suffix)
+        for file in glob.glob(surfdir+"/*h.white"):
+            shutil.copy(file,tmpdir+"/surf")
+        
+        os.chdir(tmpdir)
+        
+        # BENSON ROIS *******************************************************************
+
+        outname = 'Benson2014'
+
+        if os.path.isdir(surfdir+"/../xhemi") is False or forcex is True:
+            # register lh to fsaverage sym
+            shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix), fsdir)
+            # mirror-reverse subject rh and register to lh fsaverage_sym
+            # though the right hemisphere is not explicitly listed above, it is implied by --lh --xhemi
+            shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir)
+        else:
+            print "Skipping fsaverage_sym registration"
+
+        if separate_out:
+            datalist = ["angle", "eccen", "areas", "all"]
+        else:
+            datalist = ["all"]
+        
+        for bdata in datalist:
+
+            # resample right and left hemisphere data to symmetric hemisphere
+            shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1} --trgsurfreg {2}.sphere.reg \
+                --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/lh.{5}.{4}.mgh"
+                .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname), fsdir)
+            shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1}/xhemi --trgsurfreg {2}.sphere.reg \
+                --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/rh.{5}.{4}.mgh"                
+                .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname), fsdir)
+            
+            # convert to suma
+            for hemi in ["lh","rh"]:
+                shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.{2}.mgh ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.{2}.gii".format(hemi,outname,bdata))
+                shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{0}.{1}.{2}.gii -prefix ./TEMPLATE_ROIS/{0}.{1}.{2}.niml.dset".format(hemi,outname,bdata))
+
+        # GLASSER ROIS *******************************************************************
+
+        outname = 'Glasser2016'
+
+        for hemi in ["lh","rh"]:
+            # convert from .annot to mgz
+            shell_cmd("mri_annotation2label --subject fsaverage --hemi {0} --annotation {1}/{2}/{0}.HCPMMP1.annot --seg {0}.glassertemp1.mgz"
+                .format(hemi,atlasdir,outname))
+            # convert to subjects native space
+            shell_cmd("mri_surf2surf --srcsubject fsaverage --trgsubject {2}{3} --sval {0}.glassertemp1.mgz --hemi {0} --tval ./TEMPLATE_ROIS/{0}.{1}.mgz"
+                .format(hemi,outname,sub,suffix), fsdir)
+            # convert mgz to gii
+            shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.mgz ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.gii"
+                .format(hemi,outname))
+            # convert gii to niml.dset
+            shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{0}.{1}.gii -prefix ./TEMPLATE_ROIS/{0}.{1}.niml.dset"
+                .format(hemi,outname))
+
+        ## WANG ROIS *******************************************************************
+
+        
+        os.chdir(curdir)
+        if os.path.isdir(outdir):
+            print "Output directory {0} exists, adding '_new'".format(outdir) 
+            shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}_new".format(outdir)) 
+        else:
+            shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}".format(outdir)) 
+        if keeptemp is not True:
+            # remove temporary directory
+            shutil.rmtree(tmpdir)
+
+    
         
