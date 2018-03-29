@@ -444,6 +444,8 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 		tr = float(nib.load(meta_file).header['pixdim'][4])
 		phase_dir = bin(nib.load(meta_file).header['dim_info'])
 		phase_dir = int(phase_dir[len(phase_dir)/2 : (len(phase_dir)/2+2)],2)
+		# make phase_dir zero-indexed
+		phase_dir = phase_dir-1
 		if 'pe' in descrip:
 			pe_polar = descrip[descrip.index('pe=')+3:].split(';')[0]
 			if '0' in pe_polar:
@@ -463,6 +465,7 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 		# note, mux factor has not been incorporated in slice count
 		n_slices = meta_in['num_slices'] * mux
 		tr = meta_in['tr']
+		# note, phase_dir is already zero-indexed
 		phase_dir = meta_in['phase_encode']
 		phase_sign = '-'
 
@@ -488,7 +491,7 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 	else:
 		raise ValueError("get_meta: unknown type %s." % scan_type)
 	# meta data for all types 
-	meta_out['PhaseEncodingDirection'] = ['i','j','k'][phase_dir-1] + phase_sign   
+	meta_out['PhaseEncodingDirection'] = ['i','j','k'][phase_dir] + phase_sign   
 	meta_out['EffectiveEchoSpacing'] = echo_spacing
 	meta_out['EchoTime'] = echo_time
 	meta_out['TotalReadoutTime'] = total_time
@@ -644,6 +647,10 @@ def get_subdir(a_dir):
 	return [os.path.join(a_dir, name) for name in os.listdir(a_dir)
 		if os.path.isdir(os.path.join(a_dir, name))]
 
+# *****************************
+# *** UTILITY FUNCTIONS 
+# *****************************
+
 def BidsOrganizer(
 	study_dir,
 	id_correction=None, 
@@ -737,14 +744,34 @@ def BidsOrganizer(
 	# remove temp folder
 	shutil.rmtree(temp_dir)
 
-	# add physio metadata
-	#if not os.path.exists(os.path.join(temp_path, 'recording-cardiac_physio.json')):
-	#	if len(glob.glob(os.path.join(temp_path, 'sub-*', 'func', '*cardiac*'))) > 0:
-	#		json.dump(cardiac_bids,open(os.path.join(temp_path, 'recording-cardiac_physio.json'),'w'))
-	#if not os.path.exists(os.path.join(temp_path, 'recording-respiratory_physio.json')):
-	#	if len(glob.glob(os.path.join(temp_path, 'sub-*', 'func', '*respiratory*'))) > 0:
-	#		json.dump(respiratory_bids,open(os.path.join(temp_path, 'recording-respiratory_physio.json'),'w'))
-	# *****************************
-	# *** Cleanup
-	# *****************************
-	#cleanup(temp_path)
+
+def BidsLinks(anat_session,exp_session,remove_only=False):
+	sublist = [x.split("/")[-1] for x in glob.glob(exp_session+"/sub*")]
+	for sub in sublist:
+		for ses in glob.glob(exp_session+"/"+sub+"/ses*"): 
+			# usually only one session, but allow for more than one
+			target_anat = ses+"/anat"
+			generating_files = True
+			while generating_files:
+				target_files = [x for x in glob.glob(target_anat+"/*") if "inplane" not in x ] 
+				if not target_files:
+					try:
+						source_anat = glob.glob(anat_session+"/"+sub+"/ses*")[0]+"/anat"
+						source_files = [x for x in glob.glob(source_anat+"/*") if "inplane" not in x ]
+					except:
+						print "ERROR: Source anatomies missing for subject {0} in anat session {1}".format(sub,anat_session)
+					target_files = [x.replace(source_anat,target_anat) for x in source_files]
+					if ses.split("/")[-1] not in "ses-01":
+						# if not session 1, replace session id
+						target_files = [x.replace("ses-01",ses.split("/")[-1]) for x in target_files]
+					for i, item in enumerate(target_files):
+						os.symlink(source_files[i], target_files[i])
+					generating_files = False
+					print "Made symlinks to source anatomies for subject {0} in anat session {1}".format(sub,anat_session)
+				else:
+					for target in target_files:
+						if os.path.islink(target):
+							os.remove(target)
+					if remove_only:
+					# don't jump back into file creation loop
+						generating_files = False
