@@ -125,7 +125,7 @@ function MakeNimsLookup(nims_dir,skip_renaming,init_cond,study)
                             sbref_task = split_string(task_runs{1},'_',1);
                             sbref_split = split_string(run_names{sbref_idx(r)},'_');
                             sbref_split{1} = sbref_task;
-                            run_names{sbref_idx(r)} = join(sbref_split,'_');
+                            run_names{sbref_idx(r)} = strjoin(sbref_split,'_');
                         end
                     else
                     end
