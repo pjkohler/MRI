@@ -1,5 +1,7 @@
 import os, subprocess, sys, glob, shutil, tempfile
 from os.path import expanduser
+from nilearn import datasets, surface
+import numpy as np
 
 ## HELPER FUNCTIONS
 def fs_dir_check(fs_dir,subject):
@@ -64,6 +66,40 @@ def shell_cmd(main_cmd, fsdir=None, do_print=False):
     if do_print:
         print main_cmd
     subprocess.call("{0}".format(main_cmd), shell=True)
+
+## CLASSES
+
+class roiobject:
+    def __init__(self, curdata=np.zeros((120, 1)), curobject=None, roiname="unknown", tr=99, stimfreq=99, nharm=99, num_vox=0):
+        if curobject is None:
+            self.data = []
+            self.roi_name = roiname
+            self.tr = tr
+            self.stim_freq = stimfreq
+            self.num_harmonics = nharm
+            self.num_vox = num_vox
+        else:
+            # if curobject provided, inherit all values
+            self.data = curobject.data
+            self.roi_name = curobject.roi_name
+            self.tr = curobject.tr
+            self.stim_freq = curobject.stim_freq
+            self.num_harmonics = curobject.num_harmonics
+            self.num_vox = curobject.num_vox
+        if curdata.any():
+            self.data.append( curdata.reshape(curdata.shape[0],1) )
+            self.mean = self.average()
+            self.fft = self.fourieranalysis()
+    def average(self):
+        if len(self.data) is 0:
+            return []
+        else:
+            return np.mean(self.data,axis=0)  
+    def fourieranalysis(self):
+        return MriFFT(self.average(),
+            tr=self.tr,
+            stimfreq=self.stim_freq,
+            nharm=self.num_harmonics)
      
 ## MAIN FUNCTIONS
 
@@ -539,5 +575,217 @@ def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=
             # remove temporary directory
             shutil.rmtree(tmpdir)
 
+def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5):
+    # define output object
+    class fftobject:
+        def __init__(self):
+            for key in ["spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", "sig_amp", "sig_phase", "sig_complex"]:
+                setattr(self, key, [])
+    output = fftobject()
+    if len(signal) == 0:
+        return output
+    n = signal.size
+    sample_rate = 1/tr
+    run_time = tr * n
+    nT = signal.size
+    sample_rate = 1/tr
+    run_time = tr * nT
     
+    complex_vals = np.fft.rfft(signal,axis=0)
+    complex_vals = complex_vals.reshape(nT/2+1,1)
+    complex_vals = complex_vals[1:]/nT
+    freq_vals = np.fft.rfftfreq(nT, d=1./sample_rate)
+    freq_vals = freq_vals.reshape(nT/2+1,1)
+    freq_vals = freq_vals[1:]
+    
+    # compute full spectrum
+    output.spectrum = np.abs(complex_vals)
+    output.frequencies = freq_vals
+    
+    # compute mean cycle
+    mean_cycle = np.mean(signal.reshape(signal.shape[0] / stimfreq, stimfreq),axis=0)
+    mean_cycle = mean_cycle - np.mean(mean_cycle[0:2])
+    output.mean_cycle = mean_cycle
+    
+    for harm in range(1,nharm+1):
+        idx_list = freq_vals == (stimfreq * harm) / run_time
+
+        # Calculate Z-score
+        # Compute the mean and std of the non-signal amplitudes.  Then compute the
+        # z-score of the signal amplitude w.r.t these other terms.  This appears as
+        # the Z-score in the plot.  This measures how many standard deviations the
+        # observed amplitude differs from the distribution of other amplitudes.
+        sig_zscore = (output.spectrum[idx_list]-np.mean(output.spectrum[np.invert(idx_list)])) / np.std(output.spectrum[np.invert(idx_list)])
+        output.sig_zscore.append( sig_zscore )
         
+        # calculate Signal-to-Noise Ratio. 
+        # Signal divided by mean of 4 side bands
+        signal_idx = int(np.where(idx_list)[0])
+        noise_idx = [signal_idx-2,signal_idx-1,signal_idx+1,signal_idx+2]
+        sig_snr = output.spectrum[signal_idx] / np.mean(output.spectrum[noise_idx])
+        output.sig_snr.append( sig_snr )
+        
+        # compute complex, amp and phase
+        sig_amp = np.absolute(complex_vals[signal_idx])
+        output.sig_amp.append( sig_amp )
+        sig_phase = np.angle(complex_vals[signal_idx])
+        output.sig_phase.append( sig_phase )
+        sig_complex = complex_vals[signal_idx]
+        output.sig_complex.append( sig_complex )
+    return output   
+
+def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
+    if not sub:
+        # determine subject from input data
+        sub = surf_files[0][(surf_files[0].index('sub-')+4):(surf_files[0].index('sub-')+8)]
+    elif "sub" in sub:
+        # get rid of "sub-" string
+        sub = sub[4:]
+    print "SUBJECT:" + sub
+    # check if data from both hemispheres can be found in input
+    # check_data
+    l_files = []
+    r_files = []
+    for s in surf_files:
+        if ".R." in s:
+            s_2 = s.replace('.R.','.L.')
+            r_files.append(s)
+        elif ".L." in s:
+            s_2 = s.replace('.L.','.R.')
+            l_files.append(s)
+        else:
+            print("Hemisphere could not be determined from file %s" % s)
+            #return
+        if s_2 not in surf_files:
+            print("File %s does not have a matching file from the other hemisphere" % s)
+            #return
+    l_files = sorted(l_files)
+    r_files = sorted(r_files)
+
+    # define roi files
+    if roi.lower() == "wang":
+        l_roifile = "{0}/sub-{1}/surf/lh.wang2015_atlas.mgz".format(fsdir,sub)
+        r_roifile = l_roifile.replace("lh","rh")
+        roilabel = ["V1v", "V1d","V2v", "V2d", "V3v", "V3d", "hV4", "VO1", "VO2", "PHC1", "PHC2",
+                "TO2", "TO1", "LO2", "LO1", "V3B", "V3A", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4",
+                "IPS5", "SPL1", "FEF"]
+        newlabel = ["V1v", "V1d", "V1","V2v", "V2d", "V2", "V3v", "V3d", "V3", "hV4", "VO1", "VO2", "PHC1", "PHC2",
+                "TO2", "TO1", "LO2", "LO1", "V3B", "V3A", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4",
+                "IPS5", "SPL1", "FEF"]
+    elif roi.lower() == "benson":
+        l_roifile = "{0}/sub-{1}/surf/lh.template_areas.mgz".format(fsdir,sub)
+        r_roifile = l_roifile.replace("lh","rh")
+        roilabel = ["V1","V2","V3"]
+        newlabel = roilabel
+    elif roi.lower() == "wang+benson":
+        l_roifile = "{0}/sub-{1}/surf/lh.wang2015_atlas.mgz".format(fsdir,sub)
+        r_roifile = l_roifile.replace("lh","rh")
+        l_eccenfile = "{0}/sub-{1}/surf/lh.template_eccen.mgz".format(fsdir,sub)
+        r_eccenfile = l_eccenfile.replace("lh","rh")
+        # define roilabel based on ring centers
+        ring_incr = 0.25
+        ring_size = .5
+        ring_max = 6
+        ring_min = 1
+        ring_centers = np.arange(ring_min, ring_max, ring_incr) # list of ring extents
+        ring_extents = [(x-ring_size/2,x+ring_size/2) for x in ring_centers ]
+        roilabel = [ y+"_{:0.2f}".format(x) 
+              for y in ["V1","V2","V3"]
+              for x in ring_centers ]
+        newlabel = roilabel
+    else:
+        if ".L." in roi:
+            l_roifile = roi
+            r_roifile = r_roifile.replace('.L.','.R.')
+        elif ".R." in roi:
+            r_roifile = roi
+            l_roifile = l_roifile.replace('.R.','.L.')
+        elif "lh" in roi:
+            l_roifile = roi
+            r_roifile = r_roifile.replace('lh','rh')
+        elif "rh" in roi:
+            r_roifile = roi
+            l_roifile = l_roifile.replace('rh','lh')
+        print("Unknown ROI labels, using numeric labels")
+        max_idx = int(max(surface.load_surf_data(l_roifile))+1)
+        newlabel = ["roi_{:02.0f}".format(x) for x in range(1,max_idx)]
+    
+    outnames = [x+"-L" for x in newlabel] + [x+"-R" for x in newlabel] + [x+"-BL" for x in newlabel]
+    # create a list of outdata, with shared values 
+    outdata = [ roiobject(roiname=x,tr=TR,nharm=5,stimfreq=10) for x in outnames ]
+    
+    print "APPLYING RH ROI: " + l_roifile.split("/")[-1] + " TO DATA:"
+    for x in l_files: print x.split("/")[-1]
+    print "APPLYING LH ROI: " + r_roifile.split("/")[-1] + " TO DATA:"
+    for x in r_files: print x.split("/")[-1]
+        
+    for hemi in ["L","R"]:
+        if "L" in hemi:
+            cur_roi = l_roifile
+            cur_files = l_files
+        else:
+            cur_roi = r_roifile
+            cur_files = r_files
+        try:
+            roi_data = surface.load_surf_data(cur_roi)
+        except OSError as err:
+            print "ROI file: {0} could not be opened".format(cur_roi)
+        roi_n = roi_data.shape[0]
+        
+        if roi.lower() == "wang+benson":
+            if "L" in hemi:
+                cur_eccen = l_eccenfile
+            else:
+                cur_eccen = r_eccenfile
+            try:
+                eccen_data = surface.load_surf_data(cur_eccen)
+            except OSError as err:
+                print "Template eccen file: {0} could not be opened".format(cur_eccen)
+            eccen_n = eccen_data.shape[0]
+            assert eccen_n == roi_n, "ROIs and Template Eccen have different number of surface vertices"
+            ring_data = np.zeros_like(roi_data)
+            for r, evc in enumerate(["V1","V2","V3"]):
+                # find early visual cortex rois in wang rois
+                wanglabel = ["V1v", "V1d","V2v", "V2d", "V3v", "V3d", "hV4", "VO1", "VO2", "PHC1", "PHC2",
+                    "TO2", "TO1", "LO2", "LO1", "V3B", "V3A", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4",
+                    "IPS5", "SPL1", "FEF"]
+                roi_set = set([i+1 for i, s in enumerate(wanglabel) if evc in s])
+                roi_index = [i for i, item in enumerate(roi_data) if item in roi_set]
+                # define indices based on ring extents
+                for e, extent in enumerate(ring_extents):
+                    eccen_idx = np.where((eccen_data > extent[0]) * (eccen_data < extent[1]))[0]
+                    idx_val = e + (r*len(ring_centers))
+                    ready_idx = list(set(eccen_idx) & set(roi_index))
+                    ring_data[ready_idx] = idx_val+1
+            # now set ring values as new roi values
+            roi_data = ring_data
+        for run_file in cur_files:
+            try:
+                cur_data = surface.load_surf_data(run_file)
+            except OSError as err:
+                print "Data file: {0} could not be opened".format(run_file)
+
+            data_n = cur_data.shape[0]
+            assert data_n == roi_n, "Data and ROI have different number of surface vertices"
+            for roi_name in newlabel:
+                # note,  account for one-indexing of ROIs
+                roi_set = set([i+1 for i, s in enumerate(roilabel) if roi_name in s])
+                roi_index = [i for i, item in enumerate(roi_data) if item in roi_set]
+                num_vox = len(roi_index)
+                if num_vox == 0:
+                    print roi_name+"-"+hemi+" "+str(roi_set)
+                roi_t = np.mean(cur_data[roi_index],axis=0)
+                roi_t = roi_t[pre_tr:]
+                out_idx = outnames.index(roi_name+"-"+hemi)
+                outdata[out_idx].num_vox = num_vox
+                outdata[out_idx] = roiobject(roi_t, outdata[out_idx])
+                if "R" in hemi and run_file == cur_files[-1]:
+                    # do bilateral
+                    other_idx = outnames.index(roi_name+"-"+"L")
+                    bl_idx = outnames.index(roi_name+"-"+"BL")
+                    bl_data = [ (x + y)/2 for x, y in zip(outdata[other_idx].data, outdata[out_idx].data) ]
+                    num_vox = np.add(outdata[other_idx].num_vox, outdata[out_idx].num_vox)
+                    outdata[bl_idx].num_vox = num_vox
+                    for bl_run in bl_data:
+                        outdata[bl_idx] = roiobject(bl_run, outdata[bl_idx])
+    return (outdata, outnames)
