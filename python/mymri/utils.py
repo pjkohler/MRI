@@ -759,7 +759,7 @@ def BidsLinks(anat_session,exp_session,remove_only=False):
 						source_anat = glob.glob(anat_session+"/"+sub+"/ses*")[0]+"/anat"
 						source_files = [x for x in glob.glob(source_anat+"/*") if "inplane" not in x ]
 					except:
-						print "ERROR: Source anatomies missing for subject {0} in anat session {1}".format(sub,anat_session)
+						print("ERROR: Source anatomies missing for subject {0} in anat session {1}".format(sub,anat_session))
 					target_files = [x.replace(source_anat,target_anat) for x in source_files]
 					if ses.split("/")[-1] not in "ses-01":
 						# if not session 1, replace session id
@@ -767,7 +767,7 @@ def BidsLinks(anat_session,exp_session,remove_only=False):
 					for i, item in enumerate(target_files):
 						os.symlink(source_files[i], target_files[i])
 					generating_files = False
-					print "Made symlinks to source anatomies for subject {0} in anat session {1}".format(sub,anat_session)
+					print("Made symlinks to source anatomies for subject {0} in anat session {1}".format(sub,anat_session))
 				else:
 					for target in target_files:
 						if os.path.islink(target):
