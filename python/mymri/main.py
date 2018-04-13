@@ -2,6 +2,7 @@ import os, subprocess, sys, glob, shutil, tempfile
 from os.path import expanduser
 from nilearn import datasets, surface
 import numpy as np
+import scipy as scp
 
 ## HELPER FUNCTIONS
 def fs_dir_check(fs_dir,subject):
@@ -64,8 +65,20 @@ def shell_cmd(main_cmd, fsdir=None, do_print=False):
     if fsdir is not None:
         main_cmd = "export SUBJECTS_DIR={0}; {1}".format(fsdir, main_cmd)
     if do_print:
-        print main_cmd
+        print(main_cmd)
     subprocess.call("{0}".format(main_cmd), shell=True)
+
+def fft_offset(complex_in, offset_rad):
+    amp = np.absolute(complex_in)
+    phase = np.angle(complex_in)
+    # subtract offset from phase
+    phase = phase - offset_rad
+    phase = ( phase + np.pi) % (2 * np.pi ) - np.pi
+    # convert back to complex
+    complex_out = np.absolute(amp)*np.exp(1j*phase)
+    amp_out = np.mean(np.absolute(complex_out))
+    phase_out = np.mean(np.angle(complex_out))
+    return complex_out, amp_out, phase_out
 
 ## CLASSES
 
@@ -320,7 +333,7 @@ def Vol2Surf(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         # for gm, positive values makes the distance longer, for wm negative values
         steps = round(steps + steps * gm_mod - steps * wm_mod)
     
-    print "MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps)
+    print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
 
     if surf_vol is "standard":
         vol_dir = "{0}/{1}{2}/SUMA".format(fs_dir,subject,suffix) 
@@ -404,7 +417,7 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         # for gm, positive values makes the distance longer, for wm negative values
         steps = round(steps + steps * gm_mod - steps * wm_mod)
     
-    print "MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps)
+    print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
 
     if surf_vol is "standard":
         vol_dir = "{0}/{1}{2}/SUMA".format(fs_dir,subject,suffix) 
@@ -522,7 +535,7 @@ def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=
             # though the right hemisphere is not explicitly listed above, it is implied by --lh --xhemi
             shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir)
         else:
-            print "Skipping fsaverage_sym registration"
+            print("Skipping fsaverage_sym registration")
 
         if separate_out:
             datalist = ["angle", "eccen", "areas", "all"]
@@ -567,7 +580,7 @@ def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=
         
         os.chdir(curdir)
         if os.path.isdir(outdir):
-            print "Output directory {0} exists, adding '_new'".format(outdir) 
+            print("Output directory {0} exists, adding '_new'".format(outdir))
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}_new".format(outdir)) 
         else:
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}".format(outdir)) 
@@ -575,27 +588,29 @@ def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=
             # remove temporary directory
             shutil.rmtree(tmpdir)
 
-def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5):
+def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
+    """
+    offset=0, positive values means the first data frame was shifted forwards relative to stimulus
+              negative values means the first data frame was shifted backwards relative to stimulus
+    """
     # define output object
     class fftobject:
         def __init__(self):
-            for key in ["spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", "sig_amp", "sig_phase", "sig_complex"]:
+            for key in [ "spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", 
+                        "sig_amp", "sig_phase", "sig_complex", "noise_complex", "noise_amp", "noise_phase" ]:
                 setattr(self, key, [])
     output = fftobject()
     if len(signal) == 0:
         return output
-    n = signal.size
-    sample_rate = 1/tr
-    run_time = tr * n
     nT = signal.size
     sample_rate = 1/tr
     run_time = tr * nT
     
     complex_vals = np.fft.rfft(signal,axis=0)
-    complex_vals = complex_vals.reshape(nT/2+1,1)
+    complex_vals = complex_vals.reshape(int(nT/2+1),1)
     complex_vals = complex_vals[1:]/nT
     freq_vals = np.fft.rfftfreq(nT, d=1./sample_rate)
-    freq_vals = freq_vals.reshape(nT/2+1,1)
+    freq_vals = freq_vals.reshape(int(nT/2+1),1)
     freq_vals = freq_vals[1:]
     
     # compute full spectrum
@@ -603,10 +618,27 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5):
     output.frequencies = freq_vals
     
     # compute mean cycle
-    mean_cycle = np.mean(signal.reshape(signal.shape[0] / stimfreq, stimfreq),axis=0)
+    cycle_len = nT/stimfreq
+    nu_signal = signal
+    # this code should work whether offset is 0, negative or positive
+    pre_add = int(offset % cycle_len)
+    post_add = int(cycle_len-pre_add)
+    # add "fake cycle" by adding nans to the beginning and end of time series
+    pre_nans = np.empty((1,pre_add,)).reshape(pre_add,1)
+    pre_nans[:]=np.nan
+    nu_signal = np.insert(nu_signal, 0, pre_nans, axis=0)
+    post_nans = np.empty((1,post_add,)).reshape(post_add,1)
+    post_nans[:]=np.nan
+    nu_signal = np.append(nu_signal,post_nans)
+    # reshape, add one to stimfreq to account for fake cycle
+    nu_signal = nu_signal.reshape(int(stimfreq+1), int(nu_signal.shape[0] / (stimfreq+1)) )
+    # nan-average to get mean cycle
+    mean_cycle = np.nanmean(nu_signal, axis = 0).reshape( int(signal.shape[0] / stimfreq),1)
+    # zero the mean_cycle    
     mean_cycle = mean_cycle - np.mean(mean_cycle[0:2])
+    assert cycle_len == len(mean_cycle), "Mean cycle length {0} is different from computed cycle length {1}".format(len(mean_cycle),cycle_len)
     output.mean_cycle = mean_cycle
-    
+
     for harm in range(1,nharm+1):
         idx_list = freq_vals == (stimfreq * harm) / run_time
 
@@ -626,22 +658,28 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5):
         output.sig_snr.append( sig_snr )
         
         # compute complex, amp and phase
-        sig_amp = np.absolute(complex_vals[signal_idx])
+        # compute offset in radians, as fraction of cycle length
+        offset_rad = float(offset)/cycle_len*(2*np.pi)
+        
+        sig_complex, sig_amp, sig_phase = fft_offset(complex_vals[signal_idx],offset_rad)
+        noise_complex, noise_amp, noise_phase = fft_offset(complex_vals[noise_idx],offset_rad)
+
+        output.sig_complex.append( sig_amp )
         output.sig_amp.append( sig_amp )
-        sig_phase = np.angle(complex_vals[signal_idx])
         output.sig_phase.append( sig_phase )
-        sig_complex = complex_vals[signal_idx]
-        output.sig_complex.append( sig_complex )
+        output.noise_complex.append( noise_amp )
+        output.noise_amp.append( noise_amp )
+        output.noise_phase.append( noise_phase )
     return output   
 
-def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
+def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
     if not sub:
         # determine subject from input data
         sub = surf_files[0][(surf_files[0].index('sub-')+4):(surf_files[0].index('sub-')+8)]
     elif "sub" in sub:
         # get rid of "sub-" string
         sub = sub[4:]
-    print "SUBJECT:" + sub
+    print("SUBJECT:" + sub)
     # check if data from both hemispheres can be found in input
     # check_data
     l_files = []
@@ -714,10 +752,10 @@ def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, TR=2.0, roilabel=No
     # create a list of outdata, with shared values 
     outdata = [ roiobject(roiname=x,tr=TR,nharm=5,stimfreq=10) for x in outnames ]
     
-    print "APPLYING RH ROI: " + l_roifile.split("/")[-1] + " TO DATA:"
-    for x in l_files: print x.split("/")[-1]
-    print "APPLYING LH ROI: " + r_roifile.split("/")[-1] + " TO DATA:"
-    for x in r_files: print x.split("/")[-1]
+    print("APPLYING RH ROI: " + l_roifile.split("/")[-1] + " TO DATA:")
+    for x in l_files: print(x.split("/")[-1])
+    print("APPLYING LH ROI: " + r_roifile.split("/")[-1] + " TO DATA:")
+    for x in r_files: print(x.split("/")[-1])
         
     for hemi in ["L","R"]:
         if "L" in hemi:
@@ -729,7 +767,7 @@ def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, TR=2.0, roilabel=No
         try:
             roi_data = surface.load_surf_data(cur_roi)
         except OSError as err:
-            print "ROI file: {0} could not be opened".format(cur_roi)
+            print("ROI file: {0} could not be opened".format(cur_roi))
         roi_n = roi_data.shape[0]
         
         if roi.lower() == "wang+benson":
@@ -740,7 +778,7 @@ def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, TR=2.0, roilabel=No
             try:
                 eccen_data = surface.load_surf_data(cur_eccen)
             except OSError as err:
-                print "Template eccen file: {0} could not be opened".format(cur_eccen)
+                print("Template eccen file: {0} could not be opened".format(cur_eccen))
             eccen_n = eccen_data.shape[0]
             assert eccen_n == roi_n, "ROIs and Template Eccen have different number of surface vertices"
             ring_data = np.zeros_like(roi_data)
@@ -763,7 +801,7 @@ def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, TR=2.0, roilabel=No
             try:
                 cur_data = surface.load_surf_data(run_file)
             except OSError as err:
-                print "Data file: {0} could not be opened".format(run_file)
+                print("Data file: {0} could not be opened".format(run_file))
 
             data_n = cur_data.shape[0]
             assert data_n == roi_n, "Data and ROI have different number of surface vertices"
@@ -773,7 +811,7 @@ def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, TR=2.0, roilabel=No
                 roi_index = [i for i, item in enumerate(roi_data) if item in roi_set]
                 num_vox = len(roi_index)
                 if num_vox == 0:
-                    print roi_name+"-"+hemi+" "+str(roi_set)
+                    print(roi_name+"-"+hemi+" "+str(roi_set))
                 roi_t = np.mean(cur_data[roi_index],axis=0)
                 roi_t = roi_t[pre_tr:]
                 out_idx = outnames.index(roi_name+"-"+hemi)
@@ -789,3 +827,75 @@ def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, TR=2.0, roilabel=No
                     for bl_run in bl_data:
                         outdata[bl_idx] = roiobject(bl_run, outdata[bl_idx])
     return (outdata, outnames)
+
+def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), test_type="Hot"):
+    assert np.all(np.iscomplex(in_vals)), "input variable is not complex"
+    assert (alpha > 0.0) & (alpha < 1.0), "alpha must be between 0 and 1"
+
+    # compare against zero?
+    if in_vals.shape[1] == 1:
+        in_vals = np.append(in_vals,np.zeros(in_vals.shape, dtype=np.complex),axis=1)
+        num_cond = 1
+    else:
+        num_cond = 2
+        assert all(test_mu) == 0, "when two-dimensional complex input provided, test_mu must be complex(0,0)"
+    assert in_vals.shape[1] <= 2, 'length of second dimension of complex inputs may not exceed two'
+
+    # replace NaNs
+    in_vals = in_vals[~np.isnan(in_vals)]
+    # determine number of trials
+    M = int(in_vals.shape[0]/2);
+    in_vals = np.reshape(in_vals, (M,2))
+    p = 2; # number of variables
+    df1 = p;  # numerator degrees of freedom.
+
+    if "hot" in test_type.lower():
+        # subtract conditions
+        in_vals = np.reshape(np.subtract(in_vals[:,0],in_vals[:,1]),(M,1))
+        df2 = M-p; # denominator degrees of freedom.
+        in_vals = np.append(np.real(in_vals),np.imag(in_vals),axis=1)
+        samp_mu = np.mean(in_vals,0)
+        test_mu = np.append(np.real(test_mu),np.imag(test_mu))
+        samp_cov_mat = np.cov(in_vals[:,0],in_vals[:,1])
+
+        # Eqn. 2 in Sec. 5.3 of Anderson (1984), multiply by inverse of fraction used below::
+        f_crit = np.float(( (M-1) * p )/ ( df2 ) * scp.stats.f.ppf( 1-alpha, df1, df2 )); 
+        #try
+        inv_cov_mat  = np.linalg.inv(samp_cov_mat)
+        # Eqn. 2 of Sec. 5.1 of Anderson (1984):
+        tsqrd = np.float(np.matmul(np.matmul(M * (samp_mu - test_mu) , inv_cov_mat) , np.reshape(samp_mu - test_mu,(2,1))))
+        # F approximation 
+        tsqrdf = df2/( (M-1) * p ) * tsqrd; 
+        # use scipys F cumulative distribution function.
+        p_val = np.float(1 - scp.stats.f.cdf(tsqrdf, df1, df2))
+    else:
+        # note, if two experiment conditions are to be compared, we assume that the number of samples is equal
+        df2 = num_cond * (2*M-p); # denominator degrees of freedom.
+
+        # compute estimate of sample mean(s) from V & M 1991 
+        samp_mu = np.mean(in_vals,0)
+
+        # compute estimate of population variance, based on individual estimates
+        v_indiv = 1/df2 * ( np.sum( np.square( np.abs(in_vals[:,0]-samp_mu[0] ) ) )  
+                          + np.sum( np.square( np.abs(in_vals[:,1]-samp_mu[1] ) ) ) )
+
+        # Find critical F for corresponding alpha level drawn from F-distribution F(2,2M-2)
+        # Use scipys percent point function (inverse of `cdf`) for f
+        f_crit = scp.stats.f.ppf(1-alpha,df1,df2)
+
+        if num_cond == 1:
+            # comparing against zero
+            v_group = M/p * np.square(np.abs(samp_mu[0]-samp_mu[1]))
+            # compute the tcirc-statistic
+            tsqrd = (v_group/v_indiv)/M;
+        else:
+            # comparing two conditions
+            v_group = (np.square( M ))/( 2 * ( M * 2 ) ) * np.square(np.abs(samp_mu[0]-samp_mu[1]))
+            # compute the tcirc-statistic
+            tsqrd = ( M * 2 )/(np.square( M )) * v_group/v_indiv;
+
+        # M x T2Circ ( or (M1xM2/M1+M2)xT2circ with 2 conditions)
+        # is distributed according to F(2,2M-2)
+        # use scipys F probability density function
+        p_val = 1-scp.stats.f.cdf(v_group/v_indiv,df1,df2);            
+    return(tsqrd,p_val,f_crit)
