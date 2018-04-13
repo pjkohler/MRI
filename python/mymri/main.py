@@ -859,7 +859,7 @@ def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), tes
         samp_cov_mat = np.cov(in_vals[:,0],in_vals[:,1])
 
         # Eqn. 2 in Sec. 5.3 of Anderson (1984), multiply by inverse of fraction used below::
-        f_crit = np.float(( (M-1) * p )/ ( df2 ) * scp.stats.f.ppf( 1-alpha, df1, df2 )); 
+        t_crit = np.float(( (M-1) * p )/ ( df2 ) * scp.stats.f.ppf( 1-alpha, df1, df2 )); 
         #try
         inv_cov_mat  = np.linalg.inv(samp_cov_mat)
         # Eqn. 2 of Sec. 5.1 of Anderson (1984):
@@ -879,23 +879,25 @@ def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), tes
         v_indiv = 1/df2 * ( np.sum( np.square( np.abs(in_vals[:,0]-samp_mu[0] ) ) )  
                           + np.sum( np.square( np.abs(in_vals[:,1]-samp_mu[1] ) ) ) )
 
-        # Find critical F for corresponding alpha level drawn from F-distribution F(2,2M-2)
-        # Use scipys percent point function (inverse of `cdf`) for f
-        f_crit = scp.stats.f.ppf(1-alpha,df1,df2)
-
         if num_cond == 1:
             # comparing against zero
             v_group = M/p * np.square(np.abs(samp_mu[0]-samp_mu[1]))
-            # compute the tcirc-statistic
-            tsqrd = (v_group/v_indiv)/M;
+            # note, distinct multiplication factor
+            mult_factor = 1/M
         else:
             # comparing two conditions
             v_group = (np.square( M ))/( 2 * ( M * 2 ) ) * np.square(np.abs(samp_mu[0]-samp_mu[1]))
-            # compute the tcirc-statistic
-            tsqrd = ( M * 2 )/(np.square( M )) * v_group/v_indiv;
+            # note, distinct multiplication factor
+            mult_factor = ( M * 2 )/(np.square( M ))
 
+        # Find critical F for corresponding alpha level drawn from F-distribution F(2,2M-2)
+        # Use scipys percent point function (inverse of `cdf`) for f
+        # multiply by inverse of multiplication factor to get critical t_circ
+        t_crit = scp.stats.f.ppf(1-alpha,df1,df2) * (1/mult_factor)
+        # compute the tcirc-statistic
+        tsqrd = (v_group/v_indiv) * mult_factor;
         # M x T2Circ ( or (M1xM2/M1+M2)xT2circ with 2 conditions)
         # is distributed according to F(2,2M-2)
         # use scipys F probability density function
-        p_val = 1-scp.stats.f.cdf(v_group/v_indiv,df1,df2);            
-    return(tsqrd,p_val,f_crit)
+        p_val = 1-scp.stats.f.cdf(tsqrd * (1/mult_factor),df1,df2);            
+    return(tsqrd,p_val,t_crit)
