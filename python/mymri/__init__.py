@@ -1,3 +1,9 @@
-from utils import BidsOrganizer, BidsLinks
+try:
+	from main import Suma, Pre, Volreg, Scale, Vol2Surf, Surf2Vol, RoiTemplates, RoiSurfData, MriFFT, HotT2Test
+	from utils import BidsOrganizer, BidsLinks
+except ImportError:
+	from .main import Suma, Pre, Volreg, Scale, Vol2Surf, Surf2Vol, RoiTemplates, RoiSurfData, MriFFT, HotT2Test
+	from .utils import BidsOrganizer, BidsLinks
 
-from main import Suma, Pre, Volreg, Scale, Vol2Surf, Surf2Vol, RoiTemplates, RoiSurfData, MriFFT
+
+
