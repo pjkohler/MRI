@@ -154,6 +154,25 @@ def Suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=False
     else:
         subprocess.call("SUMA -spec {0} &".format(spec_file), shell=True)
 
+def Neuro2Radio(in_files):
+    for scan in in_files:
+        name, suffix = get_name_suffix(scan)
+        old_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True, universal_newlines=True)
+        print("Old orientation: {0}".format(old_orient))
+        temp_scan = name+"_temp"+suffix
+        shutil.copyfile(scan,temp_scan)
+        try:
+            shell_cmd("fslswapdim {0} z x y {0}".format(scan))
+            shell_cmd("fslswapdim {0} -x -y -z {0}".format(scan))
+            shell_cmd("fslorient -swaporient {0}".format(scan))
+        except:
+            # replace with original
+            shutil.copyfile(temp_scan, scan)
+            print("Orientation could not be changed for file {0}".format(scan))
+        os.remove(temp_scan)
+        new_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True, universal_newlines=True)
+        print("New orientation: {0}".format(new_orient))
+
 def Pre(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_file=None, pad_ap=0, pad_is=0, diff_mat=False, keep_temp=False):
     """
     Function for first stage of preprocessing
