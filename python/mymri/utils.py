@@ -426,7 +426,7 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 	Returns BIDS meta data for bold 
 	"""
 	if '.nii' in meta_file:
-		descrip = nib.load(meta_file).header['descrip'].tostring() 
+		descrip = str(nib.load(meta_file).header['descrip'])
 		if 'mux' in descrip:
 			mux = int(descrip[descrip.index('mux=')+4:].split(';')[0])
 		elif 'mux' in meta_file:
@@ -443,7 +443,7 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
 		n_slices = int(nib.load(meta_file).header['dim'][3])
 		tr = float(nib.load(meta_file).header['pixdim'][4])
 		phase_dir = bin(nib.load(meta_file).header['dim_info'])
-		phase_dir = int(phase_dir[len(phase_dir)/2 : (len(phase_dir)/2+2)],2)
+		phase_dir = int(phase_dir[int(len(phase_dir)/2) : int(len(phase_dir)/2+2)],2)
 		# make phase_dir zero-indexed
 		phase_dir = phase_dir-1
 		if 'pe' in descrip:
@@ -611,7 +611,7 @@ def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None, upd
 			sbref_origs = sorted(glob.glob(os.path.join(orig_dir,'*sbref*')))[::-1]
 			dti_origs = sorted(glob.glob(os.path.join(orig_dir,'*dti*')))[::-1]
 		else:
-			run_filtered = {k:v for k,v in run_correction.iteritems() if orig_dir.split("_")[-1] in k}
+			run_filtered = {k:v for k,v in run_correction.items() if orig_dir.split("_")[-1] in k}
 			task_origs = {os.path.join(orig_dir,k):v for k,v in run_filtered.items() if 'task' in v and 'sbref' not in v and 'pe' not in v}
 			anat_origs = {os.path.join(orig_dir,k):v for k,v in run_filtered.items() if 'T1' in v or 'T2' in v}
 			pe_origs = {os.path.join(orig_dir,k):v for k,v in run_filtered.items() if 'epi' in v}
