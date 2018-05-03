@@ -490,9 +490,8 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         # remove temporary directory
         shutil.rmtree(tmp_dir) 
 
-def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False):
-    """
-    Function for generating V1-V3 ROIs in subject's native space 
+def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype='NearestNode'):
+    """Function for generating V1-V3 ROIs in subject's native space 
     predicted from the cortical surface anatomy
     as described in Benson et al. (PLoS Comput Biol., 2014).
     Requires template data, which can be downloaded at:
@@ -500,6 +499,7 @@ def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=
 
     Author: pjkohler, Stanford University, 2016
     """
+    
 
     if fsdir is None:
         fsdir = os.environ["SUBJECTS_DIR"]
@@ -509,6 +509,32 @@ def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=
 
     # get current directory    
     curdir = os.getcwd()
+
+    # Assessing user input - need to identify which elements they want to run
+    run_benson, run_glasser, run_wang, run_kgs = False, False, False, False
+
+    run_benson_glasser_wang = str(run_benson_glasser_wang).lower()
+    confirmation_str = 'Running: '
+    if 'all' in run_benson_glasser_wang:
+        run_benson, run_glasser, run_wang, run_kgs = True, True, True, True
+        confirmation_str += 'Benson, Glasser, Wang, KGS'
+    elif 'benson' in run_benson_glasser_wang or 'glasser' in run_benson_glasser_wang or 'wang' in run_benson_glasser_wang or 'kgs' in run_benson_glasser_wang:
+        if 'benson' in run_benson_glasser_wang:
+            run_benson = True
+            confirmation_str += 'Benson, '
+        if 'glasser' in run_benson_glasser_wang:
+            run_glasser = True
+            confirmation_str += 'Glasser, '
+        if 'wang' in run_benson_glasser_wang:
+            run_wang = True
+            confirmation_str += 'Wang, '
+        if 'kgs' in run_benson_glasser_wang:
+            run_kgs = True
+            confirmation_str += 'KGS'
+    else:
+        print('Error - no correct option selected. Please input: benson, glasser, wang or KGS')
+        return None
+    print(confirmation_str)
 
     for sub in subjects: # loop over list of subjects
         # check if subjects' freesurfer directory exists
@@ -529,83 +555,233 @@ def RoiTemplates(subjects, atlasdir=None, fsdir=None, outdir="standard", forcex=
             outdir = "{0}/{1}{2}/TEMPLATE_ROIS".format(fsdir,sub,suffix)
         else:
             outdir = "{0}/{1}/TEMPLATE_ROIS".format(outdir,sub,suffix) # force sub in name, in case multiple subjects
-    
+
         # make temporary, local folder
         tmpdir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))
+
         # and subfoldes
         os.mkdir(tmpdir+"/surf")
         os.mkdir(tmpdir+"/TEMPLATE_ROIS")
+        os.mkdir(tmpdir+"/SUMA")
         
         # copy relevant freesurfer files
         surfdir = "{0}/{1}{2}/surf".format(fsdir,sub,suffix)
+
         for file in glob.glob(surfdir+"/*h.white"):
             shutil.copy(file,tmpdir+"/surf")
-        
+        sumadir = "{0}/{1}{2}/SUMA".format(fsdir,sub,suffix)
+        for file in glob.glob(sumadir+"/*h.smoothwm.asc"):
+            shutil.copy(file,tmpdir+"/SUMA")
+        for file in glob.glob("{0}/{1}_*.spec".format(sumadir,sub)):
+            shutil.copy(file,tmpdir+"/SUMA")
+        for file in glob.glob("{0}/{1}{2}.std141_to_native.*.niml.M2M".format(sumadir,sub,suffix)):
+            shutil.copy(file,tmpdir+"/SUMA")
         os.chdir(tmpdir)
         
         # BENSON ROIS *******************************************************************
+        if run_benson == True:
 
-        outname = 'Benson2014'
+            outname = 'Benson2014'
 
-        if os.path.isdir(surfdir+"/../xhemi") is False or forcex is True:
-            # register lh to fsaverage sym
-            shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix), fsdir)
-            # mirror-reverse subject rh and register to lh fsaverage_sym
-            # though the right hemisphere is not explicitly listed above, it is implied by --lh --xhemi
-            shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir)
-        else:
-            print("Skipping fsaverage_sym registration")
+            if os.path.isdir(surfdir+"/../xhemi") is False or forcex is True:
+                # register lh to fsaverage sym
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix), fsdir)
+                # mirror-reverse subject rh and register to lh fsaverage_sym
+                # though the right hemisphere is not explicitly listed above, it is implied by --lh --xhemi
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir)
+            else:
+                print("Skipping fsaverage_sym registration")
 
-        if separate_out:
-            datalist = ["angle", "eccen", "areas", "all"]
-        else:
-            datalist = ["all"]
-        
-        for bdata in datalist:
-
-            # resample right and left hemisphere data to symmetric hemisphere
-            shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1} --trgsurfreg {2}.sphere.reg \
-                --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/lh.{5}.{4}.mgh"
-                .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname), fsdir)
-            shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1}/xhemi --trgsurfreg {2}.sphere.reg \
-                --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/rh.{5}.{4}.mgh"                
-                .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname), fsdir)
+            if separate_out:
+                datalist = ["angle", "eccen", "areas", "all"]
+            else:
+                datalist = ["all"]
             
-            # convert to suma
-            for hemi in ["lh","rh"]:
-                shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.{2}.mgh ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.{2}.gii".format(hemi,outname,bdata))
-                shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{0}.{1}.{2}.gii -prefix ./TEMPLATE_ROIS/{0}.{1}.{2}.niml.dset".format(hemi,outname,bdata))
+            for bdata in datalist:
+
+                # resample right and left hemisphere data to symmetric hemisphere
+                shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1} --trgsurfreg {2}.sphere.reg \
+                    --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/lh.{5}.{4}.mgh"
+                    .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname), fsdir)
+                shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1}/xhemi --trgsurfreg {2}.sphere.reg \
+                    --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/rh.{5}.{4}.mgh"                
+                    .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname), fsdir)
+                
+                # convert to suma
+                for hemi in ["lh","rh"]:
+                    shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.{2}.mgh ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.{2}.gii".format(hemi,outname,bdata))
+                    shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{0}.{1}.{2}.gii -prefix ./TEMPLATE_ROIS/{0}.{1}.{2}.niml.dset".format(hemi,outname,bdata))
 
         # GLASSER ROIS *******************************************************************
+        if run_glasser == True:
 
-        outname = 'Glasser2016'
+            outname = 'Glasser2016'
 
-        for hemi in ["lh","rh"]:
-            # convert from .annot to mgz
-            shell_cmd("mri_annotation2label --subject fsaverage --hemi {0} --annotation {1}/{2}/{0}.HCPMMP1.annot --seg {0}.glassertemp1.mgz"
-                .format(hemi,atlasdir,outname))
-            # convert to subjects native space
-            shell_cmd("mri_surf2surf --srcsubject fsaverage --trgsubject {2}{3} --sval {0}.glassertemp1.mgz --hemi {0} --tval ./TEMPLATE_ROIS/{0}.{1}.mgz"
-                .format(hemi,outname,sub,suffix), fsdir)
-            # convert mgz to gii
-            shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.mgz ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.gii"
-                .format(hemi,outname))
-            # convert gii to niml.dset
-            shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{0}.{1}.gii -prefix ./TEMPLATE_ROIS/{0}.{1}.niml.dset"
-                .format(hemi,outname))
+            for hemi in ["lh","rh"]:
+                # convert from .annot to mgz
+                shell_cmd("mri_annotation2label --subject fsaverage --hemi {0} --annotation {1}/{2}/{0}.HCPMMP1.annot --seg {0}.glassertemp1.mgz"
+                    .format(hemi,atlasdir,outname))
+                # convert to subjects native space
+                shell_cmd("mri_surf2surf --srcsubject fsaverage --trgsubject {2}{3} --sval {0}.glassertemp1.mgz --hemi {0} --tval ./TEMPLATE_ROIS/{0}.{1}.mgz"
+                    .format(hemi,outname,sub,suffix), fsdir)
+                # convert mgz to gii
+                shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.mgz ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.gii"
+                    .format(hemi,outname))
+                # convert gii to niml.dset
+                shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{0}.{1}.gii -prefix ./TEMPLATE_ROIS/{0}.{1}.niml.dset"
+                    .format(hemi,outname))
 
         ## WANG ROIS *******************************************************************
+        if run_wang == True:
 
-        
+            outname = 'Wang2015'
+
+            for file in glob.glob("{0}/Wang2015/subj_surf_all/maxprob_surf_*.1D.dset".format(atlasdir)): 
+                shutil.copy(file,tmpdir+"/.")
+
+            for hemi in ["lh","rh"]:
+                # if you have a mapping file, this is much faster.  see SurfToSurf -help
+                # you can still run without a mapping file, but it is generated on-the-fly (slow!)
+                mapfile = "./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi)
+                if os.path.isfile(mapfile):
+                    print("Using existing mapping file {0}".format(mapfile))
+                    subprocess.call("SurfToSurf -i_fs ./SUMA/{0}.smoothwm.asc -i_fs ./SUMA/std.141.{0}.smoothwm.asc -output_params {1} -mapfile {2} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
+                        .format(hemi,intertype,mapfile), shell=True)
+                    newmap = False
+                else:
+                    print "Generating new mapping file"
+                    newmap = True
+                    subprocess.call("SurfToSurf -i_fs ./SUMA/{0}.smoothwm.asc -i_fs ./SUMA/std.141.{0}.smoothwm.asc -output_params {1} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
+                        .format(hemi,intertype), shell=True)       
+                    # update M2M file name to be more informative and not conflict across hemispheres
+                    os.rename("./SurfToSurf.niml.M2M".format(outname, hemi), "./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi))
+                
+                # give output file a more informative name
+                os.rename("./SurfToSurf.maxprob_surf_{0}.niml.dset".format(hemi),"./TEMPLATE_ROIS/{1}.{0}.niml.dset".format(outname,hemi))
+                # we don't need this and it conflicts across hemisphere                    
+                os.remove("./SurfToSurf.1D".format(outname, hemi))
+                #for file in glob.glob("./maxprob_surf_*.1D.dset"):
+                #    os.remove(file)
+                
+                # make a 1D.dset copy using the naming conventions of other rois,
+                # so we can utilize some other script more easily (e.g., roi1_copy_surfrois_locally.sh)
+                # mainly for Kastner lab usage
+                subprocess.call("ConvertDset -o_1D -input ./{1}/{0}.{1}.niml.dset -prepend_node_index_1D -prefix ./{1}/{0}.{1}.1D.dset"
+                    .format(hemi, outname), shell=True)
+                
+                if skipclust: # do optional surface-based clustering
+                    print '######################## CLUSTERING ########################'
+                    for idx in range(1,26):
+                        # clustering steps
+                        specfile="./SUMA/{0}{1}_{2}.spec".format(sub,suffix,hemi)  
+                        surffile="./SUMA/{0}.smoothwm.asc".format(hemi)
+            
+                        # isolate ROI
+                        subprocess.call("3dcalc -a ./{0}/{2}.{0}.niml.dset -expr 'iszero(a-{1})' -prefix {2}.temp.niml.dset"
+                            .format(outname, idx,hemi), shell=True)
+                        
+                        # do clustering, only consider cluster if they are 1 edge apart
+                        subprocess.call("SurfClust -spec {0} -surf_A {1} -input {2}.temp.niml.dset 0 -rmm -1 -prefix {2}.temp2 -out_fulllist -out_roidset"
+                            .format(specfile,surffile,hemi), shell=True)
+                            
+                        # pick only biggest cluster
+                        if idx is 1:
+                            if os.path.isfile("./{0}/{1}.{0}_cluster.niml.dset".format(outname,hemi)):
+                                print("Removing existing file ./{0}/{1}.{0}_cluster.niml.dset".format(outname,hemi)) 
+                                os.remove("./{0}/{1}.{0}_cluster.niml.dset".format(outname,hemi))
+                            subprocess.call("3dcalc -a {1}.temp2_ClstMsk_e1.niml.dset -expr 'iszero(a-1)*{2}' -prefix {1}.{0}_cluster.niml.dset"
+                                .format(outname,hemi,idx), shell=True)
+                        else:
+                            subprocess.call("3dcalc -a {1}.temp2_ClstMsk_e1.niml.dset -b {1}.{0}_cluster.niml.dset -expr 'b+iszero(a-1)*{2}' -prefix {1}.temp3.niml.dset"
+                                .format(outname,hemi,idx), shell=True)
+                            #os.remove("./{0}/{1}.{0}_cluster.niml.dset".format(outname, hemi))
+                            os.rename("{0}.temp3.niml.dset".format(hemi), "{1}.{0}_cluster.niml.dset".format(outname, hemi))
+                                
+                        for file in glob.glob("./*temp*"):
+                            os.remove(file)
+                    # is this step necessary?
+                    subprocess.call("ConvertDset -input {1}.{0}_cluster.niml.dset -o_niml_asc -prefix {1}.temp4.niml.dset"
+                        .format(outname,hemi,idx), shell=True)
+                    os.remove("{1}.{0}_cluster.niml.dset".format(outname, hemi))
+                    os.rename("{0}.temp4.niml.dset".format(hemi), "./{0}/{1}.{0}_cluster.niml.dset".format(outname, hemi))
+                
+                # copy mapping file to subjects' home SUMA directory
+                if newmap:            
+                    shutil.move("./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi),
+                                "{3}/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi,sumadir))
+            
+            
+        ##KGS ROIs *********************************************************************
+        if run_kgs == True:
+
+            outname='KGS2016'
+
+            for hemi in ["lh","rh"]:
+
+                idx = 0
+                for roi in ["IOG","OTS","mFUS","pFUS","PPA","VWFA1","VWFA2"]:
+
+                    idx += 1
+
+                    if not os.path.isfile("{1}/{3}/{0}.MPM_{2}.label".format(hemi,atlasdir,roi,outname)):
+                        # if label file does not exist, skip it
+                        print("file doesn't exist")
+                        print("{1}/{3}/{0}.MPM_{2}.label".format(hemi,atlasdir,roi,outname))
+                        continue
+                    # Make the intermediate (subject-native) surface:
+                    #   --srcsubject is always fsaverage since we assume the input file is an fsaverage file
+                    #   --trgsubject is the subject we want to convert to
+                    #   --sval is the file containing the surface data
+                    #   --hemi is just the hemisphere we want to surf-over
+                    #   --tval is the output file        
+                    subprocess.call("mri_label2label --srcsubject fsaverage --trgsubject {2}{3} --regmethod surface --hemi {0} \
+                        --srclabel {1}/{5}/{0}.MPM_{4}.label --trglabel ./{0}.{4}_TEMP.label".format(hemi,atlasdir,sub,suffix,roi,outname), shell=True)
+                        
+                    # convert to gifti
+                    subprocess.call("mris_convert --label {0}.{1}_TEMP.label {1} ./surf/{0}.white {0}.{1}_TEMP.gii".format(hemi,roi), shell=True)
+                    
+                    # convert to .niml.dset
+                    subprocess.call("ConvertDset -o_niml_asc -input {0}.{1}_TEMP.gii -prefix {0}.{1}_TEMP.niml.dset".format(hemi,roi), shell=True)
+
+                    # isolate roi of interest
+                    # do clustering, only consider cluster if they are 1 edge apart
+                    subprocess.call("SurfClust -spec ./SUMA/{2}{3}_{0}.spec -surf_A ./SUMA/{0}.smoothwm.asc -input {0}.{1}_TEMP.niml.dset 0 \
+                        -rmm -1 -prefix {0}.{1}_TEMP2.niml.dset -out_fulllist -out_roidset".format(hemi,roi,sub,suffix), shell=True)
+                
+                
+                    # create mask, pick only biggest cluster
+                    subprocess.call("3dcalc -a {0}.{1}_TEMP2_ClstMsk_e1.niml.dset -expr 'iszero(a-1)' -prefix {0}.{1}_TEMP3.niml.dset".format(hemi,roi), shell=True)
+                
+                    # dilate mask
+                    subprocess.call("ROIgrow -spec ./SUMA/{2}{3}_{0}.spec -surf_A ./SUMA/{0}.smoothwm.asc -roi_labels {0}.{1}_TEMP3.niml.dset -lim 1 -prefix {0}.{1}_TEMP4"
+                        .format(hemi,roi,sub,suffix), shell=True)
+                    
+                    numnodes = subprocess.check_output("3dinfo -ni {0}.{1}_TEMP3.niml.dset".format(hemi,roi), shell=True)
+                    numnodes = int(numnodes.rstrip("\n"))
+                    print(numnodes)
+                    numnodes = numnodes - 1
+                    subprocess.call("ConvertDset -o_niml_asc -i_1D -input {0}.{1}_TEMP4.1.1D -prefix {0}.{1}_TEMP4.niml.dset -pad_to_node {2} -node_index_1D {0}.{1}_TEMP4.1.1D[0]"
+                        .format(hemi,roi,numnodes), shell=True)
+
+                    if idx == 1:
+                        subprocess.call("3dcalc -a {0}.{1}_TEMP4.niml.dset -expr 'notzero(a)' -prefix {0}.{2}.niml.dset".format(hemi,roi,outname), shell=True)
+                    else:
+                        subprocess.call("3dcalc -a {0}.{1}_TEMP4.niml.dset -b {0}.{2}.niml.dset \
+                            -expr '(b+notzero(a)*{3})*iszero(and(notzero(b),notzero(a)))' -prefix {0}.{1}_TEMP5.niml.dset".format(hemi,roi,outname,idx), shell=True)
+                        shutil.move("{0}.{1}_TEMP5.niml.dset".format(hemi,roi), "{0}.{1}.niml.dset".format(hemi,outname))
+                shutil.move("{0}.{1}.niml.dset".format(hemi,outname), "./TEMPLATE_ROIS/{0}.{1}.niml.dset".format(hemi,outname))
+
         os.chdir(curdir)
+
         if os.path.isdir(outdir):
-            print("Output directory {0} exists, adding '_new'".format(outdir))
+            print "Output directory {0} exists, adding '_new'".format(outdir) 
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}_new".format(outdir)) 
         else:
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}".format(outdir)) 
         if keeptemp is not True:
             # remove temporary directory
             shutil.rmtree(tmpdir)
+        
 
 def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     """
