@@ -490,7 +490,7 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         # remove temporary directory
         shutil.rmtree(tmp_dir) 
 
-def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype='NearestNode'):
+def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode"):
     """Function for generating V1-V3 ROIs in subject's native space 
     predicted from the cortical surface anatomy
     as described in Benson et al. (PLoS Comput Biol., 2014).
@@ -498,12 +498,47 @@ def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=N
     https://cfn.upenn.edu/aguirre/wiki/public:retinotopy_template
 
     Author: pjkohler, Stanford University, 2016
+
+    Parameters
+    ------------
+    subjects : list of strings
+            A list of subjects that are to be run.
+    run_ben_glass_wng_kgs : string or list of strings, default "all"
+            This defaults to "All" - resulting in Benson, Glasser, Wang or KGS being run
+    atlasdir : string, default None
+            The atlas directory, containing ROI template data
+    fsdir : string, default None
+            The freesurfer directory of subjects
+    outdir : string, default "standard"
+            Output directory
+    forcex : boolean, default False
+            If there is no xhemi directiory, then as part of Benson;
+            register lh to fsaverage sym & mirror-reverse subject rh 
+            and register to lh fsaverage_sym
+    separate_out : boolean, default False
+            Can choose to separate out as part of Benson into ["angle", "eccen", "areas", "all"]
+    keeptemp : boolean, default False
+            Option to keep the temporary files that are generated
+    skipclust : boolean, default False
+            If True then will do ptional surface-based clustering
+    intertype : string, default "NearestNode"
+            Argument for SurfToSurf (AFNI). Options: 
+            - NearestTriangleNodes
+            - NearestNode
+            - NearestTriangle
+            - DistanceToSurf
+            - ProjectionOnSurf
+            - NearestNodeCoords
+            - Data
     """
     
-
+    
     if fsdir is None:
+        old_subject_dir=os.environ["SUBJECTS_DIR"]
         fsdir = os.environ["SUBJECTS_DIR"]
-
+    else:
+        old_subject_dir=os.environ["SUBJECTS_DIR"]
+        os.environ["SUBJECTS_DIR"] = fsdir
     if atlasdir is None:
         atlasdir = "{0}/ROI_TEMPLATES".format(fsdir)
 
@@ -512,23 +547,23 @@ def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=N
 
     # Assessing user input - need to identify which elements they want to run
     run_benson, run_glasser, run_wang, run_kgs = False, False, False, False
-
-    run_benson_glasser_wang = str(run_benson_glasser_wang).lower()
+    run_possible_arguments=['benson','glasser','wang','kgs']
+    run_ben_glass_wng_kgs = str(run_ben_glass_wng_kgs).lower()
     confirmation_str = 'Running: '
-    if 'all' in run_benson_glasser_wang:
+    if 'all' in run_ben_glass_wng_kgs:
         run_benson, run_glasser, run_wang, run_kgs = True, True, True, True
         confirmation_str += 'Benson, Glasser, Wang, KGS'
-    elif 'benson' in run_benson_glasser_wang or 'glasser' in run_benson_glasser_wang or 'wang' in run_benson_glasser_wang or 'kgs' in run_benson_glasser_wang:
-        if 'benson' in run_benson_glasser_wang:
+    elif [name for name in run_possible_arguments if name in run_ben_glass_wng_kgs]:
+        if 'benson' in run_ben_glass_wng_kgs:
             run_benson = True
             confirmation_str += 'Benson, '
-        if 'glasser' in run_benson_glasser_wang:
+        if 'glasser' in run_ben_glass_wng_kgs:
             run_glasser = True
             confirmation_str += 'Glasser, '
-        if 'wang' in run_benson_glasser_wang:
+        if 'wang' in run_ben_glass_wng_kgs:
             run_wang = True
             confirmation_str += 'Wang, '
-        if 'kgs' in run_benson_glasser_wang:
+        if 'kgs' in run_ben_glass_wng_kgs:
             run_kgs = True
             confirmation_str += 'KGS'
     else:
@@ -658,6 +693,8 @@ def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=N
                 
                 # give output file a more informative name
                 os.rename("./SurfToSurf.maxprob_surf_{0}.niml.dset".format(hemi),"./TEMPLATE_ROIS/{1}.{0}.niml.dset".format(outname,hemi))
+                #convert output to gii
+                shell_cmd("ConvertDset -o_gii_asc -input ./TEMPLATE_ROIS/{1}.{0}.niml.dset -prefix ./TEMPLATE_ROIS/{1}.{0}.gii".format(outname,hemi))
                 # we don't need this and it conflicts across hemisphere                    
                 os.remove("./SurfToSurf.1D".format(outname, hemi))
                 #for file in glob.glob("./maxprob_surf_*.1D.dset"):
@@ -704,7 +741,8 @@ def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=N
                         .format(outname,hemi,idx), shell=True)
                     os.remove("{1}.{0}_cluster.niml.dset".format(outname, hemi))
                     os.rename("{0}.temp4.niml.dset".format(hemi), "./{0}/{1}.{0}_cluster.niml.dset".format(outname, hemi))
-                
+                    #convert output to gii
+                    shell_cmd("ConvertDset -o_gii_asc -input ./{0}/{1}.{0}_cluster.niml.dset -prefix ./{0}/{1}.{0}_cluster.gii".format(outname,hemi))
                 # copy mapping file to subjects' home SUMA directory
                 if newmap:            
                     shutil.move("./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi),
@@ -716,6 +754,7 @@ def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=N
 
             outname='KGS2016'
 
+            os.chdir(tmpdir)
             for hemi in ["lh","rh"]:
 
                 idx = 0
@@ -733,7 +772,7 @@ def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=N
                     #   --trgsubject is the subject we want to convert to
                     #   --sval is the file containing the surface data
                     #   --hemi is just the hemisphere we want to surf-over
-                    #   --tval is the output file        
+                    #   --tval is the output file  
                     subprocess.call("mri_label2label --srcsubject fsaverage --trgsubject {2}{3} --regmethod surface --hemi {0} \
                         --srclabel {1}/{5}/{0}.MPM_{4}.label --trglabel ./{0}.{4}_TEMP.label".format(hemi,atlasdir,sub,suffix,roi,outname), shell=True)
                         
@@ -770,6 +809,8 @@ def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=N
                             -expr '(b+notzero(a)*{3})*iszero(and(notzero(b),notzero(a)))' -prefix {0}.{1}_TEMP5.niml.dset".format(hemi,roi,outname,idx), shell=True)
                         shutil.move("{0}.{1}_TEMP5.niml.dset".format(hemi,roi), "{0}.{1}.niml.dset".format(hemi,outname))
                 shutil.move("{0}.{1}.niml.dset".format(hemi,outname), "./TEMPLATE_ROIS/{0}.{1}.niml.dset".format(hemi,outname))
+                #convert from niml.dset to gii
+                shell_cmd("ConvertDset -o_gii_asc -input ./TEMPLATE_ROIS/{0}.{1}.niml.dset -prefix ./TEMPLATE_ROIS/{0}.{1}.gii".format(hemi,outname))
 
         os.chdir(curdir)
 
@@ -781,7 +822,75 @@ def RoiTemplates(subjects, run_benson_glasser_wang='all', atlasdir=None, fsdir=N
         if keeptemp is not True:
             # remove temporary directory
             shutil.rmtree(tmpdir)
+    #reset the subjects dir
+    os.environ["SUBJECTS_DIR"] = old_subject_dir
+
+def MriSurfSmooth(subject,infiles,fsdir=None,std141=None,blursize=0,keeptemp=False,outdir="standard"):
+    """
+    Function smooths surface MRI data
+    - this takes in regular and standardised data
+    """
+    if fsdir is None:
+        fsdir = os.environ["SUBJECTS_DIR"]
+     # check if subjects' freesurfer directory exists
+    if os.path.isdir("{0}/{1}".format(fsdir,subject)):
+        # no suffix needed
+        suffix=""
+    else:
+        # suffix needed
+        suffix="_fs4"
+        if not os.path.isdir("{0}/{1}{2}".format(fsdir,subject,suffix)):
+            sys.exit("ERROR!\nSubject folder {0}/{1} \ndoes not exist, without or with suffix '{2}'."
+                .format(fsdir,subject,suffix))
+    if std141:
+        specprefix = "std.141."
+    else:
+        specprefix = ""
+    # create current,temporary,output directories
+    curdir = os.getcwd()
+    tmpdir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))
+    
+    #Need to raise with Peter if this is okay - this will output files straight to end location
+    # may also be that this breaks the BIDS format
+    if outdir =="standard":
+        outdir = "{0}/{1}{2}/".format(fsdir,subject,suffix)
+    
+    # copy relevant SUMA files
+    sumadir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix)
+    print(sumadir)
+    for file in glob.glob(sumadir + "/*h.smoothwm.asc"):
+        shutil.copy(file,tmpdir)
+    for file in glob.glob("{0}/{1}{2}{3}*.spec".format(sumadir,specprefix,subject,suffix)):
+        shutil.copy(file,tmpdir)
+    
+    os.chdir(tmpdir)
+    
+    print(infiles)
+    
+    for curfile in infiles:
+        if ".niml.dset" in curfile:
+            filename = curfile[:-10]
+            splitString = filename.split(".",1)
+            #print(splitString)
+            hemi = splitString[0]
+            #print(hemi)
+            outname = "{0}_{1}fwhm".format(filename,blursize)
+        else:
+            sys.exit("ERROR!\n{0} is not .niml.dset format".format(curfile))
         
+        # move files
+        subprocess.call("3dcopy {1}/{0}.niml.dset {0}.niml.dset".format(filename,curdir),shell=True)
+        print("files moved")
+        # compute mean
+        subprocess.call("SurfSmooth -spec {0}{1}{2}_{3}.spec \
+                    -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}.niml.dset \
+                    -cmask '-a {5}.niml.dset[0] -expr bool(a)' -output  {8}/{7}.niml.dset"
+                    .format(specprefix,subject,suffix,hemi,blursize,filename,tmpdir,outname,outdir), shell=True)
+        print("mean computed")
+    os.chdir(curdir)
+    if keeptemp is not True:
+        #remove temporary directory
+        shutil.rmtree(tmpdir)        
 
 def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     """
@@ -922,23 +1031,23 @@ def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, offset=0, TR=2.0, r
         ring_min = 1
         ring_centers = np.arange(ring_min, ring_max, ring_incr) # list of ring extents
         ring_extents = [(x-ring_size/2,x+ring_size/2) for x in ring_centers ]
-        roilabel = [ y+"_{:0.2f}".format(x) 
-              for y in ["V1","V2","V3"]
-              for x in ring_centers ]
+        roilabel = [ y+"_{:0.2f}".format(x) for y in ["V1","V2","V3"] for x in ring_centers ]
         newlabel = roilabel
     else:
+        #amended code - previously the the .replace('.L.','.R.') were pointing at themselves
+        #example: r_roifile = r_roifile.replace('.L.','.R.') - this is reference before assignment
         if ".L." in roi:
             l_roifile = roi
-            r_roifile = r_roifile.replace('.L.','.R.')
+            r_roifile = roi.replace('.L.','.R.')
         elif ".R." in roi:
             r_roifile = roi
-            l_roifile = l_roifile.replace('.R.','.L.')
+            l_roifile = oi.replace('.R.','.L.')
         elif "lh" in roi:
             l_roifile = roi
-            r_roifile = r_roifile.replace('lh','rh')
+            r_roifile = roi.replace('lh','rh')
         elif "rh" in roi:
             r_roifile = roi
-            l_roifile = l_roifile.replace('rh','lh')
+            l_roifile = roi.replace('rh','lh')
         print("Unknown ROI labels, using numeric labels")
         max_idx = int(max(surface.load_surf_data(l_roifile))+1)
         newlabel = ["roi_{:02.0f}".format(x) for x in range(1,max_idx)]
