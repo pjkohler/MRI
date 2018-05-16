@@ -491,13 +491,17 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         shutil.rmtree(tmp_dir) 
 
 def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode"):
-    """Function for generating V1-V3 ROIs in subject's native space 
-    predicted from the cortical surface anatomy
-    as described in Benson et al. (PLoS Comput Biol., 2014).
+    """Function for generating ROIs in subject's native space 
+    predicted from the cortical surface anatomy.
+    Allows this to be done using methods described in:
+    - Benson et al. (PLoS Comput Biol., 2014).
+    - Glasser et al. (Nature, 2016)
+    - Wang et al. (Neuron, 2015)
+    - KGS (2016)
     Requires template data, which can be downloaded at:
     https://cfn.upenn.edu/aguirre/wiki/public:retinotopy_template
 
-    Author: pjkohler & fthomas, Stanford University, 2016
+    Author: pjkohler & fhethomas, Stanford University, 2016
     
     This function also generates ROIs based on Wang, Glasser and KGS methodology.
 
@@ -519,11 +523,13 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
             register lh to fsaverage sym & mirror-reverse subject rh 
             and register to lh fsaverage_sym
     separate_out : boolean, default False
-            Can choose to separate out as part of Benson into ["angle", "eccen", "areas", "all"]
+            Can choose to separate out as part of Benson into ["angle", "eccen", 
+            "areas", "all"]
     keeptemp : boolean, default False
             Option to keep the temporary files that are generated
     skipclust : boolean, default False
-            If True then will do ptional surface-based clustering
+            If True then will do optional surface-based clustering as part
+            of Wang
     intertype : string, default "NearestNode"
             Argument for SurfToSurf (AFNI). Options: 
             - NearestTriangleNodes
@@ -707,29 +713,28 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
                 # make a 1D.dset copy using the naming conventions of other rois,
                 # so we can utilize some other script more easily (e.g., roi1_copy_surfrois_locally.sh)
                 # mainly for Kastner lab usage
-                subprocess.call("ConvertDset -o_1D -input ./{1}/{0}.{1}.niml.dset -prepend_node_index_1D -prefix ./{1}/{0}.{1}.1D.dset"
+                subprocess.call("ConvertDset -o_1D -input ./TEMPLATE_ROIS/{0}.{1}.niml.dset -prepend_node_index_1D -prefix ./TEMPLATE_ROIS/{0}.{1}.1D.dset"
                     .format(hemi, outname), shell=True)
-                
-                if skipclust: # do optional surface-based clustering
-                    print '######################## CLUSTERING ########################'
+
+                if not skipclust: # do optional surface-based clustering
+                    print('######################## CLUSTERING ########################')
                     for idx in range(1,26):
                         # clustering steps
                         specfile="./SUMA/{0}{1}_{2}.spec".format(sub,suffix,hemi)  
                         surffile="./SUMA/{0}.smoothwm.asc".format(hemi)
             
                         # isolate ROI
-                        subprocess.call("3dcalc -a ./{0}/{2}.{0}.niml.dset -expr 'iszero(a-{1})' -prefix {2}.temp.niml.dset"
+                        subprocess.call("3dcalc -a ./TEMPLATE_ROIS/{2}.{0}.niml.dset -expr 'iszero(a-{1})' -prefix {2}.temp.niml.dset"
                             .format(outname, idx,hemi), shell=True)
-                        
                         # do clustering, only consider cluster if they are 1 edge apart
                         subprocess.call("SurfClust -spec {0} -surf_A {1} -input {2}.temp.niml.dset 0 -rmm -1 -prefix {2}.temp2 -out_fulllist -out_roidset"
                             .format(specfile,surffile,hemi), shell=True)
                             
                         # pick only biggest cluster
                         if idx is 1:
-                            if os.path.isfile("./{0}/{1}.{0}_cluster.niml.dset".format(outname,hemi)):
-                                print("Removing existing file ./{0}/{1}.{0}_cluster.niml.dset".format(outname,hemi)) 
-                                os.remove("./{0}/{1}.{0}_cluster.niml.dset".format(outname,hemi))
+                            if os.path.isfile("./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname,hemi)):
+                                print("Removing existing file ./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname,hemi)) 
+                                os.remove("./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname,hemi))
                             subprocess.call("3dcalc -a {1}.temp2_ClstMsk_e1.niml.dset -expr 'iszero(a-1)*{2}' -prefix {1}.{0}_cluster.niml.dset"
                                 .format(outname,hemi,idx), shell=True)
                         else:
@@ -741,12 +746,12 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
                         for file in glob.glob("./*temp*"):
                             os.remove(file)
                     # is this step necessary?
-                    subprocess.call("ConvertDset -input {1}.{0}_cluster.niml.dset -o_niml_asc -prefix {1}.temp4.niml.dset"
+                    subprocess.call("ConvertDset -input {1}.{0}_cluster.niml.dset -o_niml_asc -prefix ./TEMPLATE_ROIS/{1}.temp4.niml.dset"
                         .format(outname,hemi,idx), shell=True)
                     os.remove("{1}.{0}_cluster.niml.dset".format(outname, hemi))
-                    os.rename("{0}.temp4.niml.dset".format(hemi), "./{0}/{1}.{0}_cluster.niml.dset".format(outname, hemi))
+                    os.rename("./TEMPLATE_ROIS/{0}.temp4.niml.dset".format(hemi), "./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname, hemi))
                     #convert output to gii
-                    shell_cmd("ConvertDset -o_gii_asc -input ./{0}/{1}.{0}_cluster.niml.dset -prefix ./{0}/{1}.{0}_cluster.gii".format(outname,hemi))
+                    shell_cmd("ConvertDset -o_gii_asc -input ./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset -prefix ./TEMPLATE_ROIS/{1}.{0}_cluster.gii".format(outname,hemi))
                 # copy mapping file to subjects' home SUMA directory
                 if newmap:            
                     shutil.move("./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi),
