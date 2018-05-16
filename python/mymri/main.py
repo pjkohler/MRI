@@ -65,7 +65,7 @@ def shell_cmd(main_cmd, fsdir=None, do_print=False):
     if fsdir is not None:
         main_cmd = "export SUBJECTS_DIR={0}; {1}".format(fsdir, main_cmd)
     if do_print:
-        print(main_cmd)
+        print(main_cmd+'\n')
     subprocess.call("{0}".format(main_cmd), shell=True)
 
 def fft_offset(complex_in, offset_rad):
@@ -497,14 +497,17 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
     Requires template data, which can be downloaded at:
     https://cfn.upenn.edu/aguirre/wiki/public:retinotopy_template
 
-    Author: pjkohler, Stanford University, 2016
+    Author: pjkohler & fthomas, Stanford University, 2016
+    
+    This function also generates ROIs based on Wang, Glasser and KGS methodology.
 
     Parameters
     ------------
     subjects : list of strings
             A list of subjects that are to be run.
     run_ben_glass_wng_kgs : string or list of strings, default "all"
-            This defaults to "All" - resulting in Benson, Glasser, Wang or KGS being run
+            This defaults to "All" - resulting in Benson, Glasser, Wang or KGS being
+             run. Options: ['Benson','Glasser','Wang','KGS','All']
     atlasdir : string, default None
             The atlas directory, containing ROI template data
     fsdir : string, default None
@@ -599,10 +602,10 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
         os.mkdir(tmpdir+"/TEMPLATE_ROIS")
         os.mkdir(tmpdir+"/SUMA")
         
-        # copy relevant freesurfer files
-        surfdir = "{0}/{1}{2}/surf".format(fsdir,sub,suffix)
+        # copy relevant freesurfer files & establish surface directory
+        surfdir = "{0}/{1}{2}".format(fsdir,sub,suffix)
 
-        for file in glob.glob(surfdir+"/*h.white"):
+        for file in glob.glob(surfdir+"/surf/*h.white"):
             shutil.copy(file,tmpdir+"/surf")
         sumadir = "{0}/{1}{2}/SUMA".format(fsdir,sub,suffix)
         for file in glob.glob(sumadir+"/*h.smoothwm.asc"):
@@ -618,12 +621,14 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
 
             outname = 'Benson2014'
 
-            if os.path.isdir(surfdir+"/../xhemi") is False or forcex is True:
+            if os.path.isdir(surfdir+"/xhemi") is False or forcex is True:
+                #Invert the right hemisphere - currently removed as believed not needed
+                #shell_cmd("xhemireg --s {0}{1}".format(sub,suffix), fsdir,do_print=True)
                 # register lh to fsaverage sym
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix), fsdir)
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix), fsdir,do_print=True)
                 # mirror-reverse subject rh and register to lh fsaverage_sym
-                # though the right hemisphere is not explicitly listed above, it is implied by --lh --xhemi
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir)
+                # though the right hemisphere is not explicitly listed below, it is implied by --lh --xhemi
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir,do_print=True)
             else:
                 print("Skipping fsaverage_sym registration")
 
@@ -631,21 +636,20 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
                 datalist = ["angle", "eccen", "areas", "all"]
             else:
                 datalist = ["all"]
-            
+
             for bdata in datalist:
 
                 # resample right and left hemisphere data to symmetric hemisphere
                 shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1} --trgsurfreg {2}.sphere.reg \
                     --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/lh.{5}.{4}.mgh"
-                    .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname), fsdir)
+                    .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname,tmpdir), fsdir)
                 shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1}/xhemi --trgsurfreg {2}.sphere.reg \
                     --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/rh.{5}.{4}.mgh"                
-                    .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname), fsdir)
-                
+                    .format(sub,suffix,"fsaverage_sym",atlasdir,bdata,outname,tmpdir), fsdir)
                 # convert to suma
                 for hemi in ["lh","rh"]:
-                    shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.{2}.mgh ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.{2}.gii".format(hemi,outname,bdata))
-                    shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{0}.{1}.{2}.gii -prefix ./TEMPLATE_ROIS/{0}.{1}.{2}.niml.dset".format(hemi,outname,bdata))
+                    shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.{2}.mgh ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.{2}.gii".format(hemi,outname,bdata,tmpdir))
+                    shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{0}.{1}.{2}.gii -prefix ./TEMPLATE_ROIS/{0}.{1}.{2}.niml.dset".format(hemi,outname,bdata,tmpdir))
 
         # GLASSER ROIS *******************************************************************
         if run_glasser == True:
@@ -977,6 +981,7 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     return output   
 
 def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
+
     if not sub:
         # determine subject from input data
         sub = surf_files[0][(surf_files[0].index('sub-')+4):(surf_files[0].index('sub-')+8)]
@@ -1034,20 +1039,19 @@ def RoiSurfData(surf_files, roi="wang", sub=False, pre_tr=0, offset=0, TR=2.0, r
         roilabel = [ y+"_{:0.2f}".format(x) for y in ["V1","V2","V3"] for x in ring_centers ]
         newlabel = roilabel
     else:
-        #amended code - previously the the .replace('.L.','.R.') were pointing at themselves
-        #example: r_roifile = r_roifile.replace('.L.','.R.') - this is reference before assignment
-        if ".L." in roi:
-            l_roifile = roi
-            r_roifile = roi.replace('.L.','.R.')
-        elif ".R." in roi:
-            r_roifile = roi
-            l_roifile = oi.replace('.R.','.L.')
-        elif "lh" in roi:
-            l_roifile = roi
-            r_roifile = roi.replace('lh','rh')
-        elif "rh" in roi:
-            r_roifile = roi
-            l_roifile = roi.replace('rh','lh')
+        #This is reference before assignment
+        if ".L." in l_roifile:
+            l_roifile = l_roifile
+            r_roifile = r_roifile.replace('.L.','.R.')
+        elif ".R." in r_roifile:
+            r_roifile = r_roifile
+            l_roifile =l_roifile.replace('.R.','.L.')
+        elif "lh" in l_roifile:
+            l_roifile = l_roifile
+            r_roifile = r_roifile.replace('lh','rh')
+        elif "rh" in r_roifile:
+            r_roifile = r_roifile
+            l_roifile = l_roifile.replace('rh','lh')
         print("Unknown ROI labels, using numeric labels")
         max_idx = int(max(surface.load_surf_data(l_roifile))+1)
         newlabel = ["roi_{:02.0f}".format(x) for x in range(1,max_idx)]
