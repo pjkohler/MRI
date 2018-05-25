@@ -172,7 +172,10 @@ function MakeNimsLookup(nims_dir,skip_renaming,init_cond,study)
     id_p = fopen(id_file,'w');
     run_p = fopen(run_file,'w');
     
-    sessions = flip(fieldnames(json_data));
+    ses_nums = cell2mat(cellfun(@(x) str2num(x(9:end)),fieldnames(json_data),'uni',false));
+    [~,sort_idx] = sort(ses_nums,1,'descend');
+    sessions = fieldnames(json_data);
+    sessions = sessions(sort_idx);
     for s = 1:length(sessions)
         if s == 1
             fprintf(id_p,'{\n');
