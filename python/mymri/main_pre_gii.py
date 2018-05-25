@@ -1,4 +1,4 @@
-import os, subprocess, sys, glob, shutil, tempfile, pickle
+import os, subprocess, sys, glob, shutil, tempfile
 from os.path import expanduser
 from nilearn import datasets, surface
 import numpy as np
@@ -117,13 +117,7 @@ class roiobject:
             tr=self.tr,
             stimfreq=self.stim_freq,
             nharm=self.num_harmonics)
-# define output object
-class fftobject:
-    #object used for output of fft - required for unpickling
-    def __init__(self):
-        for key in [ "spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", 
-                    "sig_amp", "sig_phase", "sig_complex", "noise_complex", "noise_amp", "noise_phase" ]:
-            setattr(self, key, [])
+     
 ## MAIN FUNCTIONS
 
 def Suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=False, fs_dir=None): 
@@ -500,7 +494,7 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         # remove temporary directory
         shutil.rmtree(tmp_dir) 
 
-def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode",force_new_mapping=False):
+def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode"):
     """Function for generating ROIs in subject's native space 
     predicted from the cortical surface anatomy.
     Allows this to be done using methods described in:
@@ -550,6 +544,8 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
             - NearestNodeCoords
             - Data
     """
+    
+    
     if fsdir is None:
         old_subject_dir=os.environ["SUBJECTS_DIR"]
         fsdir = os.environ["SUBJECTS_DIR"]
@@ -558,11 +554,6 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
         os.environ["SUBJECTS_DIR"] = fsdir
     if atlasdir is None:
         atlasdir = "{0}/ROI_TEMPLATES".format(fsdir)
-    # is a userinput output directory used?
-    if outdir != 'standard':
-        outdir_flag = 'custom'
-    else:
-        outdir_flag = outdir
 
     # get current directory    
     curdir = os.getcwd()
@@ -614,7 +605,7 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
         vox_res = vox_hdr.get_zooms()
         assert vox_res == (1.0, 1.0, 1.0), 'Voxel Resolution incorrect: {0}'.format(vox_res)
         
-        if outdir_flag != "custom":
+        if outdir in "standard":
             outdir = "{0}/{1}{2}/TEMPLATE_ROIS".format(fsdir,sub,suffix)
         else:
             outdir = "{0}/{1}/TEMPLATE_ROIS".format(outdir,sub,suffix) # force sub in name, in case multiple subjects
@@ -638,41 +629,26 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
         if not os.path.isdir(sumadir):
             print('Running @SUMA_Make_Spec_FS')
             os.chdir("{0}/{1}{2}".format(fsdir,sub,suffix))
-            shell_cmd("@SUMA_Make_Spec_FS -NIFTI -sid {0}{1}".format(sub,suffix))
-            file_format="gii"
+            shell_cmd("@SUMA_Make_Spec_FS -sid {0}{1}".format(sub,suffix))
+            file_format="asc"
         else:
             # is SUMA data in .gii or .asc format?
             if len(glob.glob("{0}/{1}{2}/SUMA/*.asc".format(fsdir,sub,suffix))) > 0:
                 file_format="asc"
-            elif len(glob.glob("{0}/{1}{2}/SUMA/*.gii".format(fsdir,sub,suffix))) > 0:
-                file_format='gii'
             else:
-                print('SUMA Error - no .asc or .gii files located')
+                print('SUMA Error - no .asc files located')
                 return None
         for file in glob.glob(sumadir+"/*h.smoothwm.{0}".format(file_format)):
             shutil.copy(file,tmpdir+"/SUMA")
         for file in glob.glob("{0}/{1}_*.spec".format(sumadir,sub)):
             shutil.copy(file,tmpdir+"/SUMA")
-        # Copy existing mapping files
-        mapfiles={}
+        #This file should be generated later in code
         for file in glob.glob("{0}/{1}{2}.std141_to_native.*.niml.M2M".format(sumadir,sub,suffix)):
             shutil.copy(file,tmpdir+"/SUMA")
-            if 'lh' in file:
-                mapfiles['lh'] = file
-            else:
-                mapfiles['rh'] = file
-        """
-        #Currently not able to use this mapping file - potentially this could be used in future?
-        for file in glob.glob("{0}/std.141.{1}{2}*.niml.M2M".format(sumadir,sub,suffix)):
-            shutil.copy(file,tmpdir+"/SUMA")
-            if len(mapfiles)!=2:
-                if 'lh' in file:
-                    mapfiles['lh'] = file
-                else:
-                    mapfiles['rh'] = file
-        """
-
         os.chdir(tmpdir)
+
+
+
 
         # BENSON ROIS *******************************************************************
         if run_benson == True:
@@ -735,26 +711,21 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
 
             for file in glob.glob("{0}/Wang2015/subj_surf_all/maxprob_surf_*.1D.dset".format(atlasdir)): 
                 shutil.copy(file,tmpdir+"/.")
-            surf_to_surf_i = 'fs' if file_format == 'asc' else 'gii'
+
             for hemi in ["lh","rh"]:
                 # if you have a mapping file, this is much faster.  see SurfToSurf -help
                 # you can still run without a mapping file, but it is generated on-the-fly (slow!)
-                # mapping file may have already been generated - option 2 maybe generated
-                try:
-                    mapfile = mapfiles[hemi]
-                except:
-                    mapfile = ""
-                if os.path.isfile(mapfile) and not force_new_mapping:
-
+                mapfile = "./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi)
+                if os.path.isfile(mapfile):
                     print("Using existing mapping file {0}".format(mapfile))
-                    subprocess.call("SurfToSurf -i_{4} ./SUMA/{0}.smoothwm.{3} -i_{4} ./SUMA/std.141.{0}.smoothwm.{3} -output_params {1} -mapfile {2} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
-                        .format(hemi,intertype,mapfile,file_format,surf_to_surf_i), shell=True)
+                    subprocess.call("SurfToSurf -i_fs ./SUMA/{0}.smoothwm.{3} -i_fs ./SUMA/std.141.{0}.smoothwm.{3} -output_params {1} -mapfile {2} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
+                        .format(hemi,intertype,mapfile,file_format), shell=True)
                     newmap = False
                 else:
-                    print("Generating new mapping file")
+                    print "Generating new mapping file"
                     newmap = True
-                    subprocess.call("SurfToSurf -i_{3} ./SUMA/{0}.smoothwm.{2} -i_{3} ./SUMA/std.141.{0}.smoothwm.{2} -output_params {1} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
-                        .format(hemi,intertype,file_format,surf_to_surf_i), shell=True)       
+                    subprocess.call("SurfToSurf -i_fs ./SUMA/{0}.smoothwm.{2} -i_fs ./SUMA/std.141.{0}.smoothwm.{2} -output_params {1} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
+                        .format(hemi,intertype,file_format), shell=True)       
                     # update M2M file name to be more informative and not conflict across hemispheres
                     os.rename("./SurfToSurf.niml.M2M".format(outname, hemi), "./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi))
                 
@@ -971,7 +942,12 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     offset=0, positive values means the first data frame was shifted forwards relative to stimulus
               negative values means the first data frame was shifted backwards relative to stimulus
     """
-    
+    # define output object
+    class fftobject:
+        def __init__(self):
+            for key in [ "spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", 
+                        "sig_amp", "sig_phase", "sig_complex", "noise_complex", "noise_amp", "noise_phase" ]:
+                setattr(self, key, [])
     output = fftobject()
     if len(signal) == 0:
         return output
@@ -1247,7 +1223,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=0
                 roi_index=np.array([])
                 for item in roi_set:
                     roi_temp_index=np.array(np.where(roi_data==item)).flatten()
-                    roi_index=np.concatenate((roi_index,roi_temp_index))
+                    roi_test_index=np.concatenate((roi_test_index,roi_temp_index))
                 roi_index=roi_index.astype(int)
                 num_vox = len(roi_index)
                 if num_vox == 0:
@@ -1267,7 +1243,6 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=0
                     outdata[bl_idx].num_vox = num_vox
                     for bl_run in bl_data:
                         outdata[bl_idx] = roiobject(bl_run, outdata[bl_idx])
-    pickling_outdata('sub-{0}'.format(sub),outdata,fsdir,roi)
     print('ROI Surf Data run complete.')
     return (outdata, outnames)
 
@@ -1344,19 +1319,3 @@ def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), tes
         # use scipys F probability density function
         p_val = 1-scp.stats.f.cdf(tsqrd * (1/mult_factor),df1,df2);            
     return(tsqrd,p_val,t_crit)
-
-def pickling_outdata(sub,outdata,fsdir,roi):
-    # Pickles outdata in relevant folder
-    file_name="{0}/{1}/{1}_{2}_output_data".format(fsdir,sub,roi)
-    file_to_dump = open(file_name,'w')
-    pickle.dump(outdata,file_to_dump)
-    file_to_dump.close()
-    print("file pickled as: {0}".format(file_name))
-
-def outdata_loader(file):
-    # Returns an unpickled version of the output object
-    # Only input required is file location/name
-    file_to_open=open(file,'r')
-    unpickled=pickle.load(file_to_open)
-    return unpickled
-
