@@ -500,7 +500,7 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         # remove temporary directory
         shutil.rmtree(tmp_dir) 
 
-def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode",force_new_mapping=False):
+def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode",force_new_mapping=False):
     """Function for generating ROIs in subject's native space 
     predicted from the cortical surface anatomy.
     Allows this to be done using methods described in:
@@ -519,7 +519,7 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
     ------------
     subjects : list of strings
             A list of subjects that are to be run.
-    run_ben_glass_wng_kgs : string or list of strings, default "all"
+    roi_type : string or list of strings, default "all"
             This defaults to "All" - resulting in Benson, Glasser, Wang or KGS being
              run. Options: ['Benson','Glasser','Wang','KGS','All']
     atlasdir : string, default None
@@ -570,22 +570,22 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
     # Assessing user input - need to identify which elements they want to run
     run_benson, run_glasser, run_wang, run_kgs = False, False, False, False
     run_possible_arguments=['benson','glasser','wang','kgs']
-    run_ben_glass_wng_kgs = str(run_ben_glass_wng_kgs).lower()
+    roi_type = str(roi_type).lower()
     confirmation_str = 'Running: '
-    if 'all' in run_ben_glass_wng_kgs:
+    if 'all' in roi_type:
         run_benson, run_glasser, run_wang, run_kgs = True, True, True, True
         confirmation_str += 'Benson, Glasser, Wang, KGS'
-    elif [name for name in run_possible_arguments if name in run_ben_glass_wng_kgs]:
-        if 'benson' in run_ben_glass_wng_kgs:
+    elif [name for name in run_possible_arguments if name in roi_type]:
+        if 'benson' in roi_type:
             run_benson = True
             confirmation_str += 'Benson, '
-        if 'glasser' in run_ben_glass_wng_kgs:
+        if 'glasser' in roi_type:
             run_glasser = True
             confirmation_str += 'Glasser, '
-        if 'wang' in run_ben_glass_wng_kgs:
+        if 'wang' in roi_type:
             run_wang = True
             confirmation_str += 'Wang, '
-        if 'kgs' in run_ben_glass_wng_kgs:
+        if 'kgs' in roi_type:
             run_kgs = True
             confirmation_str += 'KGS'
     else:
@@ -868,8 +868,8 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
                         .format(hemi,roi,sub,suffix,file_format), shell=True)
                     
                     numnodes = subprocess.check_output("3dinfo -ni {0}.{1}_TEMP3.niml.dset".format(hemi,roi), shell=True)
+                    numnodes = numnodes.decode('ascii')
                     numnodes = int(numnodes.rstrip("\n"))
-                    print(numnodes)
                     numnodes = numnodes - 1
                     subprocess.call("ConvertDset -o_niml_asc -i_1D -input {0}.{1}_TEMP4.1.1D -prefix {0}.{1}_TEMP4.niml.dset -pad_to_node {2} -node_index_1D {0}.{1}_TEMP4.1.1D[0]"
                         .format(hemi,roi,numnodes), shell=True)
@@ -889,7 +889,7 @@ def RoiTemplates(subjects, run_ben_glass_wng_kgs="all", atlasdir=None, fsdir=Non
         os.chdir(curdir)
 
         if os.path.isdir(outdir):
-            print "Output directory {0} exists, adding '_new'".format(outdir) 
+            print("Output directory {0} exists, adding '_new'".format(outdir))
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}_new".format(outdir)) 
         else:
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}".format(outdir)) 
