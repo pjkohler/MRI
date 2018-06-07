@@ -1267,7 +1267,6 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=0
                     outdata[bl_idx].num_vox = num_vox
                     for bl_run in bl_data:
                         outdata[bl_idx] = roiobject(bl_run, outdata[bl_idx])
-    pickling_outdata('sub-{0}'.format(sub),outdata,fsdir,roi)
     print('ROI Surf Data run complete.')
     return (outdata, outnames)
 
@@ -1345,6 +1344,9 @@ def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), tes
         p_val = 1-scp.stats.f.cdf(tsqrd * (1/mult_factor),df1,df2);            
     return(tsqrd,p_val,t_crit)
 
+"""
+# Below functions could be used to save output objects - currently not required
+
 def pickling_outdata(sub,outdata,fsdir,roi):
     # Pickles outdata in relevant folder
     file_name="{0}/{1}/{1}_{2}_output_data".format(fsdir,sub,roi)
@@ -1359,4 +1361,4 @@ def outdata_loader(file):
     file_to_open=open(file,'r')
     unpickled=pickle.load(file_to_open)
     return unpickled
-
+"""
