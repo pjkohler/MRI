@@ -4,6 +4,10 @@ from nilearn import datasets, surface
 import numpy as np
 import scipy as scp
 import nibabel as nib
+import matplotlib.pyplot as plt
+import scipy.stats as stats
+import scipy.special as special
+from itertools import combinations
 
 ## HELPER FUNCTIONS
 def fs_dir_check(fs_dir,subject):
@@ -81,6 +85,51 @@ def fft_offset(complex_in, offset_rad):
     phase_out = np.mean(np.angle(complex_out))
     return complex_out, amp_out, phase_out
 
+def realImagSplit(sig_complex):
+    # takes complex data and splits into real and imaginary
+    sig_complex=np.concatenate((np.real(sig_complex),np.imag(sig_complex)),axis=1)
+    return sig_complex
+
+def eigFourierCoefs(xyData):
+    """Performs eigenvalue decomposition
+    on 2D data. Function assumes 2D
+    data are Fourier coefficients
+    with real coeff in 1st col and 
+    imaginary coeff in 2nd col.
+    """
+    # ensure data is in Array
+    xyData = np.array(xyData)
+    m, n = xyData.shape
+    if n != 2:
+        # ensure data is split into real and imaginary
+        xyData = realImagSplit(xyData)
+        m, n = xyData.shape
+        if n != 2:
+            print('Data in incorrect shape - please correct')
+            return None
+    realData = xyData[:,0]
+    imagData = xyData[:,1]
+    # mean and covariance
+    meanXy= np.mean(xyData,axis=0)
+    sampCovMat = np.cov(np.array([realData, imagData]))
+    # calc eigenvalues, eigenvectors
+    eigenval, eigenvec = np.linalg.eigh(sampCovMat)
+    # sort the eigenvector by the eigenvalues
+    orderedVals = np.sort(eigenval)
+    eigAscendIdx = np.argsort(eigenval)
+    smaller_eigenvec = eigenvec[:,eigAscendIdx[0]]
+    larger_eigenvec = eigenvec[:,eigAscendIdx[1]]
+    smaller_eigenval = orderedVals[0]
+    larger_eigenval = orderedVals[1]
+    
+    phi = np.arctan2(larger_eigenvec[1],larger_eigenvec[0])
+    # this angle is between -pi & pi, shift to 0 and 2pi
+    if phi < 0:
+        phi = phi + 2*np.pi
+    return (meanXy, sampCovMat, smaller_eigenvec, 
+           smaller_eigenval,larger_eigenvec, 
+           larger_eigenval, phi)
+
 ## CLASSES
 
 class roiobject:
@@ -119,7 +168,6 @@ class roiobject:
             nharm=self.num_harmonics)
 # define output object
 class fftobject:
-    #object used for output of fft - required for unpickling
     def __init__(self):
         for key in [ "spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", 
                     "sig_amp", "sig_phase", "sig_complex", "noise_complex", "noise_amp", "noise_phase" ]:
@@ -1037,10 +1085,10 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
         sig_complex, sig_amp, sig_phase = fft_offset(complex_vals[signal_idx],offset_rad)
         noise_complex, noise_amp, noise_phase = fft_offset(complex_vals[noise_idx],offset_rad)
 
-        output.sig_complex.append( sig_amp )
+        output.sig_complex.append( sig_complex )
         output.sig_amp.append( sig_amp )
         output.sig_phase.append( sig_phase )
-        output.noise_complex.append( noise_amp )
+        output.noise_complex.append( noise_complex )
         output.noise_amp.append( noise_amp )
         output.noise_phase.append( noise_phase )
     return output   
@@ -1344,21 +1392,245 @@ def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), tes
         p_val = 1-scp.stats.f.cdf(tsqrd * (1/mult_factor),df1,df2);            
     return(tsqrd,p_val,t_crit)
 
-"""
-# Below functions could be used to save output objects - currently not required
+def fitErrorEllipse(xyData, ellipseType='SEM', makePlot=False, returnRad=False):
+    """ Function uses eigen value decomposition
+    to find two perpendicular axes aligned with xyData
+    where the eigen vector correspond to variances 
+    along each direction. An ellipse is fit to
+    data at a distance from mean datapoint,
+    depending on ellipseType specified.
+    
+    Calculation for error ellipses based on
+    alpha-specified confidence region (e.g. 
+    95%CI or 68%CI) are calculated following
+    information from Chapter 5 of Johnson & 
+    Wickern (2007) Applied Multivatiate 
+    Statistical Analysis, Pearson Prentice Hall
+    
+    Parameters
+    ------------
+    xyData : N x 2 matrix of 2D array
+        Data contains real and imaginary data
+        xyData should be [real, imag]
+    ellipseType : string, default 'SEM'
+        Options are - SEM, 95%CI, or specific
+        different percentage in format 'x%CI'
+    makePlot : Boolean, default False
+        Specifies whether or not to generate
+        a plot of the data & ellipse & eigen
+        vector
+    returnRad : Boolean, default False
+        Specifies whether to return values
+        in radians or degrees.
+    Returns
+    ------------
+    ampDiff : numpy array,
+            differences of lower and upper bound
+            for the mean amplitude
+    phaseDiff : numpy array,
+            differences of lower and upper bound
+            for the mean phase
+    zSNR : float,
+            z signal to noise ratio
+    errorEllipse : numpy array,
+            Array of error ellipses
+    """
+    xyData=np.array(xyData)
+    
+    # convert returnRad to an integer for indexing purposes later
+    returnRad = int(returnRad)
 
-def pickling_outdata(sub,outdata,fsdir,roi):
-    # Pickles outdata in relevant folder
-    file_name="{0}/{1}/{1}_{2}_output_data".format(fsdir,sub,roi)
-    file_to_dump = open(file_name,'w')
-    pickle.dump(outdata,file_to_dump)
-    file_to_dump.close()
-    print("file pickled as: {0}".format(file_name))
+    if len(xyData[np.iscomplex(xyData)])==len(xyData):
+    
+        xyData=realImagSplit(xyData)
+    else:
+        check=input('Data not complex. Should run continue? True/False')
+        if check == False:
+            print('Run stopped')
+            return None
+    n = xyData.shape[0]
+    assert xyData.shape[1]==2, 'data should be of dimensions: N x 2, currently: {0}'.format(xyData.shape[1])
+    try:
+        (meanXy, sampCovMat, smaller_eigenvec, 
+           smaller_eigenval,larger_eigenvec, 
+           larger_eigenval, phi)=eigFourierCoefs(xyData)
+    except:
+        print('Unable to run eigen value decomposition. Probably data have only 1 sample')
+        return None
+    theta_grid = np.linspace(0,2*np.pi,num=100)
+    if ellipseType == '1STD':
+        a = np.sqrt(larger_eigenval)
+        b = np.sqrt(smaller_eigenval)
+    elif ellipseType == '2STD':
+        a = 2*np.sqrt(larger_eigenval)
+        b = 2*np.sqrt(smaller_eigenval)
+    elif ellipseType == 'SEMarea':
+        # scale ellipse's area by sqrt(n)
+        a = np.sqrt(larger_eigenval/np.sqrt(n))
+        b = np.sqrt(smaller_eigenval/np.sqrt(n))
+    elif ellipseType == 'SEM'or ellipseType=='SEMellipse':
+        # contour at stdDev/sqrt(n)
+        a = np.sqrt(larger_eigenval)/np.sqrt(n)
+        b = np.sqrt(smaller_eigenval)/np.sqrt(n)
+    elif 'CI' in ellipseType:
+        # following Eqn. 5-19 Johnson & Wichern (2007)
+        try:
+            critVal = float(ellipseType[:-3])/100
+        except:
+            print('EllipseType incorrectly formatted, please see docstring')
+            return None
+        assert critVal < 1.0 and critVal > 0.0,'EllipseType CI range must be between 0 & 100'
+        t0_sqrd = ((n - 1) * 2)/(n * (n - 2)) * stats.f.ppf(critVal, 2, n - 2)
+        a = sqrt(larger_eigenval * t0_sqrd)
+        b = sqrt(smaller_eigenval * t0_sqrd)
+    else:
+        print('EllipseType Input incorrect, please see docstring')
+        return None
+    # the ellipse in x & y coordinates
+    ellipse_x_r = a * np.cos(theta_grid)
+    ellipse_x_r = np.reshape(ellipse_x_r, (ellipse_x_r.shape[0], 1))
+    ellipse_y_r = b * np.sin(theta_grid)
+    ellipse_y_r = np.reshape(ellipse_y_r, (ellipse_y_r.shape[0], 1))
+    
+    # Define a rotation matrix
+    R = np.array([[np.cos(phi), np.sin(phi)],[-np.sin(phi), np.cos(phi)]]) 
+    # rotate ellipse to some angle phi
+    errorEllipse = np.dot(np.concatenate((ellipse_x_r, ellipse_y_r), axis=1), R)
+    # shift to be centered on mean coordinate
+    errorEllipse = np.add(errorEllipse, meanXy)
+    
+    # find vector length of each point on ellipse
+    norms = np.array([np.linalg.norm(errorEllipse[point,:]) for point in range(errorEllipse.shape[0])])
+    ampMinNorm = min(norms)
+    ampMinNormIx = np.argmin(norms)
+    ampMaxNorm = max(norms)
+    ampMaxNormIx = np.argmax(norms)
+    norm_meanXy = np.linalg.norm(meanXy)
+    ampDiff = np.array([norm_meanXy - ampMinNorm, ampMaxNorm - norm_meanXy])
+    ampEllipseExtremes = np.array([ampMinNorm,ampMaxNorm])
+    
+    # calculate phase angles & find max pairwise difference to determine phase bounds
+    phaseAngles = np.arctan2(errorEllipse[:,1], errorEllipse[:,0])
+    pairs = np.array([np.array(comb) for comb in list(combinations(phaseAngles,2))])
+    diffPhase = np.absolute(pairs[:,1] - pairs[:,0]) # find absolute difference of each pair
+    diffPhase[diffPhase > np.pi] = 2 * np.pi - diffPhase[diffPhase > np.pi] # unwrap the difference
+    maxDiffIdx = np.argmax(diffPhase)
+    anglesOI = pairs[maxDiffIdx,:]
+    phaseMinIx = np.argwhere(phaseAngles == anglesOI[0])[0]
+    phaseMaxIx = np.argwhere(phaseAngles == anglesOI[1])[0]
 
-def outdata_loader(file):
-    # Returns an unpickled version of the output object
-    # Only input required is file location/name
-    file_to_open=open(file,'r')
-    unpickled=pickle.load(file_to_open)
-    return unpickled
-"""
+    
+    # convert to degrees (if necessary) & find diff between (max bound & mean phase) & (mean phase & min bound)
+    # everything converted from [-pi, pi] to [0, 2*pi] for unambiguous calculation
+    convFactor = np.array([180 / np.pi,1])
+    unwrapFactor = np.array([360, 2 * np.pi])
+    phaseEllipseExtremes = anglesOI*convFactor[returnRad]
+    phaseEllipseExtremes[phaseEllipseExtremes < 0 ] = phaseEllipseExtremes[phaseEllipseExtremes < 0] + unwrapFactor[returnRad]
+    
+    phaseBounds = np.array([min(phaseEllipseExtremes),max(phaseEllipseExtremes)])
+    meanPhase = np.arctan2(meanXy[1],meanXy[0]) * convFactor[returnRad]
+    if meanPhase < 0:
+        meanPhase = meanPhase + unwrapFactor[returnRad]
+    
+    # if ellipse overlaps with origin, defined by whether phase angles in all 4 quadrants
+    phaseAngles[phaseAngles < 0] = phaseAngles[phaseAngles < 0] + 2*np.pi
+    
+    quad1 = phaseAngles[(phaseAngles > 0) & (phaseAngles < np.pi/2)]
+    quad2 = phaseAngles[(phaseAngles > np.pi/2) & (phaseAngles < np.pi)]
+    quad3 = phaseAngles[(phaseAngles > np.pi/2) & (phaseAngles < 3 * np.pi/2)]
+    quad4 = phaseAngles[(phaseAngles > 3 * np.pi/2) & (phaseAngles < 2 * np.pi)]
+    if len(quad1) > 0 and len(quad2) > 0 and len(quad3) > 0 and len(quad4) > 0:
+        amplBounds = np.array([0, ampMaxNorm])
+        maxVals = np.array([360, 2 * np.pi])
+        phaseBounds = np.array([0, maxVals[returnRad]])
+        phaseDiff = np.array([np.absolute(phaseBounds[0] - meanPhase), 
+                              np.absolute([phaseBounds[1] - meanPhase])])
+    else:
+        amplBounds = ampEllipseExtremes
+        phaseDiff = np.array([np.absolute(phaseBounds[0] - meanPhase), np.absolute(phaseBounds[1] - meanPhase)])
+    
+    # unwrap phase diff for any ellipse that overlaps with positive x axis
+    
+    phaseDiff[phaseDiff > unwrapFactor[returnRad] / 2] = unwrapFactor[returnRad] - phaseDiff[phaseDiff > unwrapFactor[returnRad]/2]
+    
+    zSNR = norm_meanXy / np.mean(np.array([norm_meanXy - ampMinNorm, ampMaxNorm - norm_meanXy]))
+    
+    # Data plot
+    if makePlot:
+        # Below makes 2 subplots
+        plt.figure(figsize=(9,9))
+        font={'size':16,'color':'k','weight':'light'}
+        # Figure 1 - eigen vector & SEM ellipse
+        plt.subplot(1,2,1)
+        plt.plot(xyData[:,0],xyData[:,1],'ko',markerfacecolor='k')
+        plt.plot([0,meanXy[0]],[0,meanXy[1]],linestyle = 'solid',color = 'k', linewidth = 1)
+        # plot ellipse
+        plt.plot(errorEllipse[:,0],errorEllipse[:,1],'b-',linewidth = 1, label = ellipseType + ' ellipse')
+        # plot smaller eigen vec
+        small_eigen_mean = [np.multiply(np.sqrt(smaller_eigenval), smaller_eigenvec[0]) + meanXy[0],
+                            np.multiply(np.sqrt(smaller_eigenval), smaller_eigenvec[1]) + meanXy[1]]
+        plt.plot([meanXy[0], small_eigen_mean[0]], [meanXy[1], small_eigen_mean[1]],'g-',
+                 linewidth = 1, label = 'smaller eigen vec')
+        # plot larger eigen vec
+        large_eigen_mean = [np.multiply(np.sqrt(larger_eigenval), larger_eigenvec[0]) + meanXy[0],
+                            np.multiply(np.sqrt(larger_eigenval), larger_eigenvec[1]) + meanXy[1]]
+        plt.plot([meanXy[0], large_eigen_mean[0]], [meanXy[1], large_eigen_mean[1]],'m-',
+                 linewidth = 1, label = 'larger eigen vec')
+        # add axes
+        plt.axhline(color = 'k', linewidth = 1)
+        plt.axvline(color = 'k', linewidth = 1)
+        plt.legend(loc=3,frameon=False)
+        plt.axis('equal')
+        
+        # Figure 2 - mean amplitude, phase and amplitude bounds
+        plt.subplot(1,2,2)
+        # plot error Ellipse
+        plt.plot(errorEllipse[:,0],errorEllipse[:,1], color = 'k', linewidth = 1)
+        
+        # plot ampl. bounds
+        plt.plot([0,errorEllipse[ampMinNormIx,0]], [0,errorEllipse[ampMinNormIx,1]],
+                 color = 'r', linestyle = '--')
+        plt.plot([0,errorEllipse[ampMaxNormIx,0]], [0,errorEllipse[ampMaxNormIx,1]],
+                 color = 'r', label = 'ampl. bounds', linestyle = '--')
+        font['color']='r'
+        plt.text(errorEllipse[ampMinNormIx,0], errorEllipse[ampMinNormIx,1],
+                 round(ampMinNorm, 2), fontdict = font)
+        plt.text(errorEllipse[ampMaxNormIx,0], errorEllipse[ampMaxNormIx,1],
+                 round(ampMaxNorm, 2), fontdict = font)
+        
+        # plot phase bounds
+        plt.plot([0,errorEllipse[phaseMinIx,0]], [0,errorEllipse[phaseMinIx,1]], 
+                 color = 'b', linewidth = 1)
+        plt.plot([0,errorEllipse[phaseMaxIx,0]], [0,errorEllipse[phaseMaxIx,1]], 
+                 color = 'b', linewidth = 1, label = 'phase bounds')
+        font['color']='b'
+        plt.text(errorEllipse[phaseMinIx,0], errorEllipse[phaseMinIx,1],
+                 round(phaseEllipseExtremes[0], 2), fontdict = font)
+        plt.text(errorEllipse[phaseMaxIx,0], errorEllipse[phaseMaxIx,1],
+                 round(phaseEllipseExtremes[1], 2), fontdict = font)
+        
+        # plot mean vector
+        plt.plot([0, meanXy[0]],[0,meanXy[1]], color = 'k', linewidth = 1, label = 'mean ampl.')
+        font['color'] = 'k'
+        plt.text(meanXy[0],meanXy[1],round(norm_meanXy,2),fontdict=font)
+        
+        # plot major/minor axis
+        plt.plot([meanXy[0], a * larger_eigenvec[0] + meanXy[0]], 
+                 [meanXy[1], a * larger_eigenvec[1] + meanXy[1]],
+                 color='m',linewidth=1)
+        plt.plot([meanXy[0], -a * larger_eigenvec[0] + meanXy[0]], 
+                 [meanXy[1], -a * larger_eigenvec[1] + meanXy[1]],
+                 color='m',linewidth=1)
+        plt.plot([meanXy[0], b * smaller_eigenvec[0] + meanXy[0]], 
+                 [meanXy[1], b * smaller_eigenvec[1] + meanXy[1]],
+                 color='g',linewidth=1)
+        plt.plot([meanXy[0], -b * smaller_eigenvec[0] + meanXy[0]], 
+                 [meanXy[1], -b * smaller_eigenvec[1] + meanXy[1]],
+                 color='g',linewidth=1)
+        
+        plt.axhline(color = 'k', linewidth = 1)
+        plt.axvline(color = 'k', linewidth = 1)
+        plt.legend(loc = 3, frameon = False)
+        plt.axis('equal')
+        plt.show()
+    return ampDiff, phaseDiff, zSNR, errorEllipse
