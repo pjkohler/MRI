@@ -23,7 +23,7 @@ def fs_dir_check(fs_dir,subject):
             .format(fs_dir,subject,suffix))
     return suffix
 
-def copy_suma_files(suma_dir,tmp_dir):
+def copy_suma_files(suma_dir,tmp_dir,subject,suffix=None,spec_prefix=None):
     for file in glob.glob(suma_dir+"/*h.smoothwm.asc"):
         shutil.copy(file,tmp_dir)
     for file in glob.glob(suma_dir+"/*h.pial.asc"):
@@ -436,7 +436,7 @@ def Vol2Surf(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
     else:
         specprefix = ""    
     
-    copy_suma_files(suma_dir,tmp_dir)
+    copy_suma_files(suma_dir,tmp_dir,subject)
 
     os.chdir(tmp_dir)
     for cur_file in in_files:
@@ -520,7 +520,7 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
     else:
         specprefix = ""    
     
-    copy_suma_files(suma_dir,tmp_dir)
+    copy_suma_files(suma_dir,tmp_dir,subject)
     
     os.chdir(tmp_dir)
     for curfile in in_files:
