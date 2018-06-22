@@ -2,6 +2,7 @@ import os, subprocess, sys, glob, shutil, tempfile, pickle
 from os.path import expanduser
 from nilearn import datasets, surface
 import numpy as np
+import pandas as pd
 import scipy as scp
 import nibabel as nib
 import matplotlib.pyplot as plt
@@ -129,6 +130,11 @@ def eigFourierCoefs(xyData):
     return (meanXy, sampCovMat, smaller_eigenvec, 
            smaller_eigenval,larger_eigenvec, 
            larger_eigenval, phi)
+
+def subjectFmriData(sub, fmriFolder):
+    # returns files needed to run RoiSurfData
+    fmridir= '{0}/{1}/ses-01/func/'.format(fmriFolder,sub)
+    return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii']
 
 ## CLASSES
 
@@ -445,6 +451,7 @@ def Vol2Surf(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         if mask is None:
             # no mask
             maskcode = ""
+        else:
             if mask is 'data':
                 # mask from input data
                 maskcode = "-cmask '-a {0}[0] -expr notzero(a)' ".format(file_name)
@@ -1634,3 +1641,121 @@ def fitErrorEllipse(xyData, ellipseType='SEM', makePlot=False, returnRad=False):
         plt.axis('equal')
         plt.show()
     return ampDiff, phaseDiff, zSNR, errorEllipse
+
+def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre_tr=0, roi='wang+benson'):
+    """ Combine data across subjects - across RoIs & Harmonics
+    So there might be: 180 RoIs x 5 harmonics x N subjects
+    Parameters
+    ------------
+    subjects : list
+        List of all subjects to submit
+    fmriFolder : string
+        Folder location, required to identify files
+        to be used
+    fsdir : string/os file location, default to SUBJECTS_DIR
+        Freesurfer folder directory
+    pre_tr : int, default 0
+        input for RoiSurfData - please see for more info
+    roi : str, default 'wang+benson'
+        other options as per RoiSurfData function
+    Returns
+    ------------
+    outdata_arr : numpy array
+        a numpy array with dimensions of
+        (roi_number, harmonic_number, subjects_number)
+    outnames : list
+        a list of strings, containing RoIs
+    """
+    for sub_int, sub in enumerate(subjects):
+        # produce list of files 
+        surf_files = subjectFmriData(sub, fmriFolder)
+        # run RoiSurfData
+        outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr)
+        # Define the empty array we want to fill or concatenate together
+        if sub_int == 0:
+            outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
+        else:
+            outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
+    return outdata_arr, outnames
+
+def applyFitErrorEllipse(combined_harmonics, outnames, ampPhaseZsnr_output='all',ellipseType='SEM', makePlot=False, returnRad=False):
+    """ Apply fitErrorEllipse to output data from RoiSurfData.
+    Parameters
+    ------------
+    combined_harmonics : numpy array
+        create this input using combineHarmonics()
+        array dimensions: (roi_number, harmonic_number, subject_number)
+    outnames : list of strings
+        list of all RoIs
+    ampPhaseZsnr_output : string or list or strs, default 'all'
+        Can specify what output you would like.
+        These are phase difference, amp difference and zSNR
+        Options: 'all', 'phase', 'amp', 'zSNR',['phase','amp'] etc
+    ellipseType : string, default 'SEM'
+        ellipse type SEM or in format: 'x%CI'
+    makePlot : boolean, default False
+        If True, will produce a plot for each RoI
+    returnRad : boolean, default False
+        Specify to return values in radians or degrees
+    
+    Returns
+    ------------
+    ampPhaseZSNR_df : pd.DataFrame,
+        contains RoIs as index, amp difference lower/upper, 
+        phase difference lower/upper, zSNR
+    errorEllipse_dic : dictionary,
+        contains a dictionary of numpy arrays of the 
+        error ellipses broken down by RoI.
+    """ 
+
+    # dictionary for output of error Ellipse
+    errorEllipse_dic={}
+    # number of rois, harmonics, subjects
+    roi_n, harmonics_n, subjects_n = combined_harmonics.shape
+    # to be used to create the final columns in the dataframe
+    harmonic_name_list = ['RoIs']
+
+    # Loop through harmonics & rois
+    for harmonic in range(harmonics_n):
+        print('Working on harmonic: {0}'.format(harmonic + 1))
+        harmonic_measures=[measure+str(harmonic+1) for measure in ['AmpDiffLower','AmpDiffHigher','PhaseDiffLower','PhaseDiffHigher','zSNR']]
+        harmonic_name_list+=harmonic_measures
+        for roi in range(roi_n):
+            errorEllipseName = '{0}_harmonic_{1}'.format(outnames[roi],harmonic)
+            xyData = combined_harmonics[roi,harmonic,:]
+            xyData = np.reshape(xyData,(len(xyData),1))
+            ampDiff, phaseDiff, zSNR, errorEllipse = fitErrorEllipse(xyData,ellipseType,makePlot,returnRad)
+            errorEllipse_dic[errorEllipseName] = errorEllipse
+            if roi==0 and harmonic ==0:
+                t=np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
+            elif harmonic == 0:
+                t=np.concatenate((t,np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
+            elif roi==0:
+                t=np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
+            else:
+                t=np.concatenate((t,np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
+        if harmonic == 0:
+            overall=t
+        else:
+            overall=np.concatenate((overall,t),axis=1)
+    
+    # construct dataframe for output
+    ampPhaseZSNR_df=pd.DataFrame(data=overall,columns=harmonic_name_list,index=outnames)
+    ampPhaseZsnr_output = str(ampPhaseZsnr_output).lower()
+    phase = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Phase' in col]]
+    amp = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Amp' in col]]
+    zSNR = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'z' in col]]
+    
+    if ampPhaseZsnr_output == 'all':
+        concat_columns = [phase, amp, zSNR]
+    else:
+        concat_columns = []
+        if 'phase' in ampPhaseZsnr_output:
+            concat_columns.append(phase)
+        if 'amp' in ampPhaseZsnr_output:
+            concat_columns.append(phase)
+        if 'zsnr' in ampPhaseZsnr_output:
+            concat_columns.append(zSNR)
+    ampPhaseZSNR_df = pd.concat((concat_columns),axis=1)
+    print('DataFrame constructed')
+    return ampPhaseZSNR_df, errorEllipse_dic
