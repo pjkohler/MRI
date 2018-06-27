@@ -456,7 +456,7 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
     file_list : list of strings
         This is a list of all files created by the function
     """
-
+    print('Running subject: {0}'.format(subject))
     # Check if a functional directory has been defined
     if funcdir is None:
         # get current directory    
@@ -482,7 +482,7 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
             old = re.findall('space-\w+_',file_name)[0]
             if std141 == False:
                 new = 'space-surf.native_'
-            elif std141 == True:
+            else:
                 new = 'space-surf.std141_'
             output_name_dic[file_name] = file_name.replace(old,new)
         else:
@@ -530,7 +530,7 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
     else:
         specprefix = ""    
     # copy Suma files into the temporary directory
-    copy_suma_files(suma_dir,tmp_dir,subject)
+    copy_suma_files(suma_dir,tmp_dir,subject,spec_prefix=specprefix)
     
     os.chdir(tmp_dir)
     for cur_file in in_files:
