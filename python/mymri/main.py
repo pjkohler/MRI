@@ -1,4 +1,4 @@
-import os, subprocess, sys, glob, shutil, tempfile, pickle
+import os, subprocess, sys, glob, shutil, tempfile, re
 from os.path import expanduser
 from nilearn import datasets, surface
 import numpy as np
@@ -24,16 +24,20 @@ def fs_dir_check(fs_dir,subject):
             .format(fs_dir,subject,suffix))
     return suffix
 
-def copy_suma_files(suma_dir,tmp_dir,subject,suffix=None,spec_prefix=None):
-    for file in glob.glob(suma_dir+"/*h.smoothwm.asc"):
-        shutil.copy(file,tmp_dir)
-    for file in glob.glob(suma_dir+"/*h.pial.asc"):
-        shutil.copy(file,tmp_dir)
-    for file in glob.glob("{0}/{1}{2}{3}*.spec".format(suma_dir,spec_prefix,subject,suffix)):
-        shutil.copy(file,tmp_dir)
+def copy_suma_files(suma_dir,tmp_dir,subject,suffix="",spec_prefix=""):
+    for files in glob.glob(suma_dir+"/*h.smoothwm.gii"):
+        shutil.copy(files,tmp_dir)
+    for files in glob.glob(suma_dir+"/*h.pial.gii"):
+        shutil.copy(files,tmp_dir)
+    for files in glob.glob(suma_dir+"/*h.smoothwm.asc"):
+        shutil.copy(files,tmp_dir)
+    for files in glob.glob(suma_dir+"/*h.pial.asc"):
+        shutil.copy(files,tmp_dir)
+    for files in glob.glob("{0}/{1}{2}{3}*.spec".format(suma_dir,spec_prefix,subject,suffix)):
+        shutil.copy(files,tmp_dir)
     # for some reason, 3dVol2Surf requires these files, so copy them as well
-    for file in glob.glob(suma_dir+"/*aparc.*.annot.niml.dset"):
-        shutil.copy(file,tmp_dir)
+    for files in glob.glob(suma_dir+"/*aparc.*.annot.niml.dset"):
+        shutil.copy(files,tmp_dir)
 
 def get_name_suffix(cur_file,surface=False):
     if surface:
@@ -390,27 +394,111 @@ def Scale(in_files, no_dt=False, keep_temp=False):
         # remove temporary directory
         shutil.rmtree(tmpdir)
 
-def Vol2Surf(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, fs_dir=None, surf_vol='standard', std141=False, keep_temp=False):
+def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, fsdir=os.environ["SUBJECTS_DIR"], surf_vol='standard', std141=False, keep_temp=False):
     """
     Function for converting from volume to surface space.  
     Supports suma surfaces both in native and std141 space.
-    Surfave volume can be given using the --surf_vol argument.
+    Surface volume can be given using the --surf_vol argument.
     Various other options from 3dVol2Surf are implemented, 
     sometimes with names that are more meaningful (to me).
     'data' option for mask still needs to be implemented. 
+    
+    For additional information on 3dVol2Surf parameters please
+    see: https://afni.nimh.nih.gov/pub/dist/doc/program_help/3dVol2Surf.html
 
     Author: pjkohler, Stanford University, 2016
+    Updated : fhethomas, 2018
+    
+    Parameters
+    ------------
+    subject : string
+        Subject that is to be run. Example : 'sub-0039'
+    in_files : list of strings
+        All files that are to be converted from volume to surface
+    funcdir : string, default None
+        The directory of functional data. If not provided then current
+        directory is used.
+    map_func : string, default 'ave'
+        Parameter for AFNI 3dVol2Surf function. Parameter is:
+        map_func. Options - 'ave', 'mask', 'seg_vals'
+    wm_mod : float, default 0.0
+        Parameter for AFNI 3dVol2Surf function. Parameter is:
+        f_p1_fr. This specifies a change to point p1 in direction
+        of point pn. Change is a fraction i.e. -0.2 & 0.2
+    gm_mod : float, default 0.0
+        Parameter for AFNI 3dVol2Surf function. Parameter is:
+        f_pn_fr. To extend segment past pn fraction will be postive.
+        To reduce segment back to p1 will be negative
+    prefix : string, default None
+        File may need a specific prefix
+    index : string, default 'voxels'
+        Parameter for AFNI 3dVol2Surf function. Parameter is:
+        f_index. Specifies whether to use all seg points or
+        unique volume voxels. Options: nodes, voxels
+    steps : integer, default 10
+        Parameter for AFNI 3dVol2Surf function. Parameter is:
+        f_steps. Specify number of evenly spaced points along
+        each segment
+    mask : string, default None
+        Parameter for AFNI 3dVol2Surf function. Parameter is:
+        cmask. Produces a mask to be applied to input AFNI dataset.
+    fsdir : string, default os.environ["SUBJECTS_DIR"]
+        Freesurfer directory
+    surf_vol : string, default 'standard'
+        File location of volume directory/file
+    std141 : Boolean, default False
+        Is subject to be run with standard 141?
+    keep_temp : Boolean, default False
+        Should temporary folder that is set up be kept after function 
+        runs?
+    Returns 
+    ------------
+    file_list : list of strings
+        This is a list of all files created by the function
     """
-    # get current directory    
-    cur_dir = os.getcwd()
+
+    # Check if a functional directory has been defined
+    if funcdir is None:
+        # get current directory    
+        cur_dir = os.getcwd()
+    else:
+        cur_dir = funcdir
+    
+    # list of files created by this function
+    file_list = []
+    # convert between old and new hemisphere notation
+    hemi_dic = {'lh' : 'L', 'rh' : 'R'}
+    
+    # Define the names to be used for file output
+    criteria_list = ['sub','ses','task','run','space']
+    input_format = 'bids'
+    output_name_dic = {}
+    for cur_file in in_files:
+        file_name, file_suffix = get_name_suffix(cur_file)
+        # Checking for bids formatting
+        if not sum([crit in file_name for crit in criteria_list]) == len(criteria_list):
+            input_format = 'non-bids'
+        if input_format == 'bids':
+            old = re.findall('space-\w+_',file_name)[0]
+            if std141 == False:
+                new = 'space-surf.native_'
+            elif std141 == True:
+                new = 'space-surf.std141_'
+            output_name_dic[file_name] = file_name.replace(old,new)
+        else:
+            if std141 == False:
+                new = 'space-surf.native'
+            elif std141 == True:
+                new = 'space-surf.std141'
+            output_name_dic[file_name] = '{0}_{1}'.format(file_name, new)
+
     # make temporary, local folder
     tmp_dir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))   
     
-    if fs_dir is None:
-        fs_dir = os.environ["SUBJECTS_DIR"]
     # check if subjects' SUMA directory exists
-    suffix = fs_dir_check(fs_dir,subject)
-    suma_dir = "{0}/{1}{2}/SUMA".format(fs_dir,subject,suffix)
+    suffix = fs_dir_check(fsdir,subject)
+    suma_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix)
+
     
     if wm_mod is not 0.0 or gm_mod is not 0.0:
         # for gm, positive values makes the distance longer, for wm negative values
@@ -419,17 +507,17 @@ def Vol2Surf(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
     print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
 
     if surf_vol is "standard":
-        vol_dir = "{0}/{1}{2}/SUMA".format(fs_dir,subject,suffix) 
-        vol_file = "{0}{1}_SurfVol+orig".format(subject,suffix)
+        vol_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix) 
+        vol_file = "{0}{1}_SurfVol.nii".format(subject,suffix)
     else:
         vol_dir = '/'.join(surf_vol.split('/')[0:-1])
         vol_file = surf_vol.split('/')[-1]
         if not vol_dir: # if volume directory is empty
             vol_dir = cur_dir
-    
+
     # make temporary copy of volume file     
-    subprocess.call("3dcopy {0}/{1} {2}/{1}".format(vol_dir,vol_file,tmp_dir,vol_file), shell=True)
-    
+    subprocess.call("3dcopy {0}/{1} {2}/{1}".format(vol_dir,vol_file,tmp_dir), shell=True)
+
     # now get specfiles
     if prefix is None:
         prefix = "."
@@ -441,13 +529,14 @@ def Vol2Surf(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         prefix = ".std.141{0}".format(prefix)
     else:
         specprefix = ""    
-    
+    # copy Suma files into the temporary directory
     copy_suma_files(suma_dir,tmp_dir,subject)
-
+    
     os.chdir(tmp_dir)
     for cur_file in in_files:
-        file_name, file_suffix = get_name_suffix(cur_file)   
-        subprocess.call("3dcopy {1}/{0}{2} {0}+orig".format(file_name,cur_dir,file_suffix), shell=True)
+        file_name, file_suffix = get_name_suffix(cur_file)
+        # unzip the .nii.gz files into .nii files
+        shell_cmd("gunzip -c {0}/{1}.nii.gz > {2}/{1}.nii".format(cur_dir,file_name,tmp_dir),do_print=False)
         if mask is None:
             # no mask
             maskcode = ""
@@ -461,16 +550,22 @@ def Vol2Surf(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
                 subprocess.call("3dcopy {1}/{0}{2} mask+orig".format(mask_name,cur_dir,mask_suffix), shell=True)
                 maskcode = "-cmask '-a mask+orig[0] -expr notzero(a)' "
         for hemi in ["lh","rh"]:
-            subprocess.call("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
-                    -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}+orig -map_func {6} \
+            output_file_name = "{0}.{1}.func".format(output_name_dic[file_name],hemi_dic[hemi])
+            # Converts volume to surface space - output in .niml.dset
+            shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
+                    -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.nii -map_func {6} \
                     -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
-                    -outcols_NSD_format -oob_value -0 {13}-out_niml {11}/{3}{12}{5}.niml.dset"
-                    .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,cur_dir,prefix,maskcode), shell=True)
-    
-    os.chdir(cur_dir)    
+                    -outcols_NSD_format -oob_value -0 {12}-out_niml {14}/{13}.niml.dset"
+                    .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,cur_dir,maskcode,output_file_name,tmp_dir), do_print=False)
+            # Converts the .niml.dset into a .gii file in the functional directory
+            shell_cmd("ConvertDset -o_gii_asc -input {1}/{0}.niml.dset -prefix {2}/{0}.gii".format(output_file_name,tmp_dir,cur_dir),do_print=False)
+            file_list.append('{1}/{0}'.format(output_file_name,cur_dir))            
+    os.chdir(cur_dir) 
     if keep_temp is not True:
         # remove temporary directory
         shutil.rmtree(tmp_dir)
+    print('Vol2Surf run complete')
+    return file_list
 
 def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, out_dir=None, fs_dir=None, surf_vol='standard', std141=False, keep_temp=False):
     """
@@ -566,7 +661,8 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
     Requires template data, which can be downloaded at:
     https://cfn.upenn.edu/aguirre/wiki/public:retinotopy_template
 
-    Author: pjkohler & fhethomas, Stanford University, 2016
+    Author: pjkohler, Stanford University, 2016
+    Updates: fhethomas, 2018
     
     This function also generates ROIs based on Wang, Glasser and KGS methodology.
 
