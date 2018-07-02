@@ -143,7 +143,7 @@ def subjectFmriData(sub, fmriFolder):
 ## CLASSES
 
 class roiobject:
-    def __init__(self, curdata=np.zeros((120, 1)), curobject=None, is_time_series=True, roiname="unknown", tr=99, stimfreq=99, nharm=99, num_vox=0):
+    def __init__(self, curdata=np.zeros((120, 1)), curobject=None, is_time_series=True, roiname="unknown", tr=99, stimfreq=99, nharm=99, num_vox=0, offset=0):
         if curobject is None:
             self.data = []
             self.roi_name = roiname
@@ -152,6 +152,7 @@ class roiobject:
             self.num_harmonics = nharm
             self.num_vox = num_vox
             self.is_time_series=is_time_series
+            self.offset=offset
         else:
             # if curobject provided, inherit all values
             self.data = curobject.data
@@ -161,6 +162,7 @@ class roiobject:
             self.num_harmonics = curobject.num_harmonics
             self.num_vox = curobject.num_vox
             self.is_time_series=curobject.is_time_series
+            self.offset = curobject.offset
         if curdata.any():
             self.data.append( curdata.reshape(curdata.shape[0],1) )
             self.mean = self.average()
@@ -175,7 +177,8 @@ class roiobject:
         return MriFFT(self.average(),
             tr=self.tr,
             stimfreq=self.stim_freq,
-            nharm=self.num_harmonics)
+            nharm=self.num_harmonics,
+            offset=self.offset)
 # define output object
 class fftobject:
     def __init__(self):
@@ -1198,7 +1201,7 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
 
 # New test version of the function: 
 
-def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=0, offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
+def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=6, offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
     """
     region of interest surface data
     
@@ -1328,7 +1331,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=0
     
     outnames = [x+"-L" for x in newlabel] + [x+"-R" for x in newlabel] + [x+"-BL" for x in newlabel]
     # create a list of outdata, with shared values 
-    outdata = [ roiobject(is_time_series=is_time_series,roiname=x,tr=TR,nharm=5,stimfreq=10) for x in outnames ]
+    outdata = [ roiobject(is_time_series=is_time_series,roiname=x,tr=TR,nharm=5,stimfreq=10,offset=offset) for x in outnames ]
 
     print("APPLYING RH ROI: " + l_roifile.split("/")[-1] + " TO DATA:")
     for x in l_files: print(x.split("/")[-1])
@@ -1740,7 +1743,8 @@ def fitErrorEllipse(xyData, ellipseType='SEM', makePlot=False, returnRad=False):
 
 def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre_tr=0, roi='wang+benson'):
     """ Combine data across subjects - across RoIs & Harmonics
-    So there might be: 180 RoIs x 5 harmonics x N subjects
+    So there might be: 180 RoIs x 5 harmonics x N subjects.
+    This uses the RoiSurfData function carry out FFT.
     Parameters
     ------------
     subjects : list
