@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import scipy.stats as stats
 import scipy.special as special
 from itertools import combinations
+from sklearn.linear_model import LinearRegression
 
 ## HELPER FUNCTIONS
 def fs_dir_check(fs_dir,subject):
@@ -1900,3 +1901,113 @@ def applyFitErrorEllipse(combined_harmonics, outnames, ampPhaseZsnr_output='all'
     ampPhaseZSNR_df = pd.concat((concat_columns),axis=1)
     print('DataFrame constructed')
     return ampPhaseZSNR_df, errorEllipse_dic
+def graphRois(combined_harmonics,outnames,subjects=None,harmonic=1,rois=['V1','V2','V3'],hemisphere='BL',figsize=6):
+    """This function will graph RoI data. 
+    Parameters
+    ------------
+    combined_harmonics : numpy array
+        Array of complex data. Must be in
+        below shape: RoI x Hemisphere x Subjects.
+        If data has been averaged across subjects
+        then will be in shape: RoI x Hemisphere
+    outnames : list
+        This will be a list of RoI names produced
+        by RoiSurfData
+    subjects : list, default None
+        If plotting across subjects this is
+        required to iterate over and to add legend
+        to graph. If data has been averaged across
+        subjects then not required.
+    harmonic : integer, default 1
+        Select harmonic required. Options start at 1,
+        as in 1st harmonic, 2nd etc.
+    rois : list, default ['V1','V2','V3']
+        List of RoIs interested in
+    hemisphere : string, default 'BL'
+        Options are 'L', 'R' or 'BL'
+    figsize : integer, default 6
+        Sets the figsize of graphs produced
+    Returns
+    ------------
+    ROI_coefs : dictionary
+        A dictionary by RoI of coefficients for the 
+        regression and the coefficient of the line
+        perpendicular to the regression line.
+    """
+    # Initial user input checking
+    harmonic-=1
+    if subjects == None:
+        assert combined_harmonics.ndim == 2, 'Data shape implies subjects should be supplied.'
+    elif subjects != None:
+        assert combined_harmonics.ndim == 3, 'Data shape implies subjects should not be supplied.'
+    hemisphere = hemisphere.upper()
+    assert hemisphere in ['L','R','BL'], 'Hemisphere incorrect. See docstring for options'
+    
+    # select only specific hemisphere to look at
+    ROIs_hemisphere={x:i for i,x in enumerate(outnames) if hemisphere in x}
+    # Create linear regression model for later use
+    linear_reg=LinearRegression()
+    ROI_coefs = {}
+    # Loop through RoIs and produce scatter plot
+    for roi in rois:
+        ROI_coef = []
+        v = {k:ROIs_hemisphere[k] for k in ROIs_hemisphere.keys() if roi in k}
+        plt.figure(figsize=(figsize,figsize))
+        # If using data averaged across subjects
+        if subjects == None or len(subjects) ==1 :
+            # select the data based on desired harmonic and the RoI
+            harmonic_user_data = combined_harmonics[min(v.values()):max(v.values())+1,harmonic]
+            m, = harmonic_user_data.shape
+            user_data = harmonic_user_data
+            user_data = user_data.reshape(m,1)
+            # split complex data into real and imaginary
+            user_data = realImagSplit(user_data)
+            plt.scatter(user_data[:,0],user_data[:,1])
+            all_user_data = user_data
+            subjects = ['Mean Subject Data']
+        else:
+            first_iteration = True
+            # select the data across subjects based on desired harmonic and the RoI
+            harmonic_user_data = combined_harmonics[min(v.values()):max(v.values())+1,harmonic,:]
+            m, u = harmonic_user_data.shape
+            for s, subject in enumerate(subjects):
+                user_data = harmonic_user_data[:,s]
+                user_data = user_data.reshape(m,1)
+                user_data = realImagSplit(user_data)
+                if first_iteration == True:
+                    all_user_data = user_data
+                    first_iteration = False
+                else:
+                    all_user_data = np.concatenate((all_user_data,user_data),axis=0)
+                # plot individual subjects
+                plt.scatter(user_data[:,0],user_data[:,1])
+        # Create graph
+        plt.title(roi)
+        plt.axis('equal')
+        plt.xlabel('Real')
+        plt.ylabel('Imaginary')
+        # Add line for axes
+        plt.axhline(color = 'k', linewidth = 1)
+        plt.axvline(color = 'k', linewidth = 1)
+        # Create legend
+        plt.legend(['linear fit','neg']+subjects,loc=4)
+        m,n = all_user_data.shape
+        # fit a linear regression
+        X=all_user_data[:,0].reshape(m,1)
+        y=all_user_data[:,1].reshape(m,1)
+        linear_reg.fit(X,y)
+        ROI_coef.append(linear_reg.coef_.flatten()[0])
+        # set the intercept to the origin
+        linear_reg.intercept_=0
+        m=max(np.absolute(np.min(X)),np.absolute(np.max(X)))
+        # plot regression line & perpendicular of regression
+        X=np.linspace(-m,+m)
+        X=X.reshape(X.shape[0],1)
+        plt.plot(X,linear_reg.predict(X),'k')
+        linear_reg.coef_ = 1/(-linear_reg.coef_)
+        ROI_coef.append(linear_reg.coef_.flatten()[0])
+        ROI_coefs[roi] = ROI_coef
+        plt.plot(X,linear_reg.predict(X),'k')
+        plt.show()
+    # returns RoIs - coefficients & negative inverse of coeff
+    return ROI_coefs
