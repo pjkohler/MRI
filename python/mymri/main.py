@@ -135,10 +135,15 @@ def eigFourierCoefs(xyData):
            smaller_eigenval,larger_eigenvec, 
            larger_eigenval, phi)
 
-def subjectFmriData(sub, fmriFolder):
-    # returns files needed to run RoiSurfData
+def subjectFmriData(sub, fmriFolder,std141=False):
     fmridir= '{0}/{1}/ses-01/func/'.format(fmriFolder,sub)
-    return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii']
+    # returns files needed to run RoiSurfData
+    if std141==True:
+        return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
+    else:
+        return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
+    
+    
 
 ## CLASSES
 
@@ -1201,7 +1206,7 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
 
 # New test version of the function: 
 
-def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=6, offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
+def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2, offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
     """
     region of interest surface data
     
@@ -1741,9 +1746,11 @@ def fitErrorEllipse(xyData, ellipseType='SEM', makePlot=False, returnRad=False):
         plt.show()
     return ampDiff, phaseDiff, zSNR, errorEllipse
 
-def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre_tr=0, roi='wang+benson'):
+def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre_tr=0, roi='wang+benson',tasks=None, offset=None,std141=False):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
+    This can be further split out by tasks. If no task is 
+    provided then 
     This uses the RoiSurfData function carry out FFT.
     Parameters
     ------------
@@ -1758,25 +1765,59 @@ def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre
         input for RoiSurfData - please see for more info
     roi : str, default 'wang+benson'
         other options as per RoiSurfData function
+    tasks : list, default None
+        Processing to be split by task and run 
+        separately
+    offset : dictionary, default None
+        offset to be applied to relevant tasks:
+        Positive values means the first data frame was 
+        shifted forwards relative to stimulus.
+        Negative values means the first data frame was 
+        shifted backwards relative to stimulus.
+        example: {'cont':2,'disp':8,'mot':2}
+    std141 : boolean, default False
+        Should files for combined harmonics
+        be std141 or native
     Returns
     ------------
-    outdata_arr : numpy array
-        a numpy array with dimensions of
-        (roi_number, harmonic_number, subjects_number)
+    task_dic : dictionary
+        dictionary contains data broken down by task
+        into:
+            outdata_arr : numpy array
+                a numpy array with dimensions of
+                (roi_number, harmonic_number, subjects_number)
     outnames : list
         a list of strings, containing RoIs
     """
-    for sub_int, sub in enumerate(subjects):
-        # produce list of files 
-        surf_files = subjectFmriData(sub, fmriFolder)
-        # run RoiSurfData
-        outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr)
-        # Define the empty array we want to fill or concatenate together
-        if sub_int == 0:
-            outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
-        else:
-            outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
-    return outdata_arr, outnames
+    task_dic={}
+    if tasks==None:
+        print('No task provided. Data to be run together.')
+        for sub_int, sub in enumerate(subjects):
+            # produce list of files 
+            surf_files = subjectFmriData(sub, fmriFolder,std141=std141)
+            # run RoiSurfData
+            outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
+            # Define the empty array we want to fill or concatenate together
+            if sub_int == 0:
+                outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
+            else:
+                outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
+        task_dic['task'], outnames = outdata_arr, outnames
+        return task_dic
+    else:
+        for task in tasks:
+            for sub_int, sub in enumerate(subjects):
+                # produce list of files 
+                surf_files = [f for f in subjectFmriData(sub, fmriFolder, std141=std141) if task in f]
+                # run RoiSurfData
+                outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset[task])
+                # Define the empty array we want to fill or concatenate together
+                if sub_int == 0:
+                    outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
+                else:
+                    outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
+            task_dic[task], outnames = outdata_arr, outnames
+        return task_dic, outnames
 
 def applyFitErrorEllipse(combined_harmonics, outnames, ampPhaseZsnr_output='all',ellipseType='SEM', makePlot=False, returnRad=False):
     """ Apply fitErrorEllipse to output data from RoiSurfData.
