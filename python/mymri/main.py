@@ -1205,8 +1205,6 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
         output.noise_phase.append( noise_phase )
     return output   
 
-# New test version of the function: 
-
 def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2, offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"]):
     """
     region of interest surface data
@@ -1399,6 +1397,9 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
             except OSError as err:
                 print("Data file: {0} could not be opened".format(run_file))
             data_n = cur_data.shape[0]
+            # testing
+            print('shape of surface data: {0}'.format(cur_data.shape))
+            print('roi shape: {0}'.format(roi_n))
             assert data_n == roi_n, "Data and ROI have different number of surface vertices"
             for roi_name in newlabel:
                 # note,  account for one-indexing of ROIs
@@ -1901,7 +1902,7 @@ def applyFitErrorEllipse(combined_harmonics, outnames, ampPhaseZsnr_output='all'
     ampPhaseZSNR_df = pd.concat((concat_columns),axis=1)
     print('DataFrame constructed')
     return ampPhaseZSNR_df, errorEllipse_dic
-def graphRois(combined_harmonics,outnames,subjects=None,harmonic=1,rois=['V1','V2','V3'],hemisphere='BL',figsize=6):
+def graphRois(combined_harmonics,outnames,subjects=None,plot_by_subject=False,harmonic=1,rois=['V1','V2','V3'],hemisphere='BL',figsize=6):
     """This function will graph RoI data. 
     Parameters
     ------------
@@ -1918,6 +1919,10 @@ def graphRois(combined_harmonics,outnames,subjects=None,harmonic=1,rois=['V1','V
         required to iterate over and to add legend
         to graph. If data has been averaged across
         subjects then not required.
+    plot_by : boolean, default False
+        How should data be plotted? Either will
+        be plotted by subject or will
+        be plotted by above or below inverse neg regression
     harmonic : integer, default 1
         Select harmonic required. Options start at 1,
         as in 1st harmonic, 2nd etc.
@@ -1934,6 +1939,8 @@ def graphRois(combined_harmonics,outnames,subjects=None,harmonic=1,rois=['V1','V
         regression and the coefficient of the line
         perpendicular to the regression line.
     """
+    output = []
+    
     # Initial user input checking
     harmonic-=1
     if subjects == None:
@@ -1962,7 +1969,8 @@ def graphRois(combined_harmonics,outnames,subjects=None,harmonic=1,rois=['V1','V
             user_data = user_data.reshape(m,1)
             # split complex data into real and imaginary
             user_data = realImagSplit(user_data)
-            plt.scatter(user_data[:,0],user_data[:,1])
+            if plot_by_subject==True:
+                plt.scatter(user_data[:,0],user_data[:,1])
             all_user_data = user_data
             subjects = ['Mean Subject Data']
         else:
@@ -1979,18 +1987,25 @@ def graphRois(combined_harmonics,outnames,subjects=None,harmonic=1,rois=['V1','V
                     first_iteration = False
                 else:
                     all_user_data = np.concatenate((all_user_data,user_data),axis=0)
-                # plot individual subjects
-                plt.scatter(user_data[:,0],user_data[:,1])
+                if plot_by_subject==True:
+                    # plot individual subjects
+                    plt.scatter(user_data[:,0],user_data[:,1])
         # Create graph
         plt.title(roi)
         plt.axis('equal')
         plt.xlabel('Real')
         plt.ylabel('Imaginary')
+        
         # Add line for axes
         plt.axhline(color = 'k', linewidth = 1)
         plt.axvline(color = 'k', linewidth = 1)
         # Create legend
-        plt.legend(['linear fit','neg']+subjects,loc=4)
+        if plot_by_subject == True:
+            additional_legend = subjects
+            plt.legend(['linear fit','perpendicular fit']+additional_legend,loc=4)
+        else:
+            additional_legend = ['Positive','Negative']
+        
         m,n = all_user_data.shape
         # fit a linear regression
         X=all_user_data[:,0].reshape(m,1)
@@ -2003,11 +2018,20 @@ def graphRois(combined_harmonics,outnames,subjects=None,harmonic=1,rois=['V1','V
         # plot regression line & perpendicular of regression
         X=np.linspace(-m,+m)
         X=X.reshape(X.shape[0],1)
-        plt.plot(X,linear_reg.predict(X),'k')
+        plt.plot(X,linear_reg.predict(X),'k',label='linear fit')
         linear_reg.coef_ = 1/(-linear_reg.coef_)
         ROI_coef.append(linear_reg.coef_.flatten()[0])
         ROI_coefs[roi] = ROI_coef
-        plt.plot(X,linear_reg.predict(X),'k')
+        plt.plot(X,linear_reg.predict(X),'k',label='perpendicular fit')
+        # give the figures a symbol +1/-1
+        roi_output = np.concatenate((all_user_data,np.zeros((all_user_data.shape[0],1))),axis=1)
+        roi_output[roi_output[:,1]<roi_output[:,0]*linear_reg.coef_.flatten(),2]=-1
+        roi_output[roi_output[:,1]>roi_output[:,0]*linear_reg.coef_.flatten(),2]=+1
+        output.append(roi_output)
+        if plot_by_subject == False:
+            plt.scatter(roi_output[roi_output[:,2]==1,0],roi_output[roi_output[:,2]==1,1],label='Positive')
+            plt.scatter(roi_output[roi_output[:,2]==-1,0],roi_output[roi_output[:,2]==-1,1],label='Negative')
+            plt.legend(loc=4)
         plt.show()
     # returns RoIs - coefficients & negative inverse of coeff
-    return ROI_coefs
+    return output
