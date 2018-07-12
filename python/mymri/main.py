@@ -1934,10 +1934,11 @@ def graphRois(combined_harmonics,outnames,subjects=None,plot_by_subject=False,ha
         Sets the figsize of graphs produced
     Returns
     ------------
-    ROI_coefs : dictionary
-        A dictionary by RoI of coefficients for the 
-        regression and the coefficient of the line
-        perpendicular to the regression line.
+    output : numpy array
+        Returns the numpy array of values
+        with the addition of sign (+1/-1)
+        for above or below the perpendicular
+        of regression line through the origin
     """
     output = []
     
