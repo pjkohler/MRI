@@ -144,6 +144,15 @@ def subjectFmriData(sub, fmriFolder,std141=False,session='01'):
     else:
         return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
 
+def create_file_dictionary(experiment_fmri_dir):
+    # creates file dictionary necessary for Vol2Surf
+    subjects = [folder for folder in os.listdir(experiment_fmri_dir) if 'sub' in folder and '.html' not in folder]
+    subject_session_dic = {subject: [session for session in os.listdir("{0}/{1}".format(experiment_fmri_dir,subject)) if 'ses' in session] for subject in subjects}
+    subject_session_directory = []
+    for subject in subjects:
+        subject_session_directory += ["{0}/{1}/{2}/func".format(experiment_fmri_dir,subject,session) for session in subject_session_dic[subject]]
+    files_dic = {directory : [files for files in os.listdir(directory) if 'preproc.nii.gz' in files] for directory in subject_session_directory}
+    return files_dic
 def make_hard_links(bidsdir,experiment,subjects,fsdir):
     """Function creates hardlinks from freesurfer directory to the experiment folder
 
@@ -444,7 +453,7 @@ def Scale(in_files, no_dt=False, keep_temp=False):
         # remove temporary directory
         shutil.rmtree(tmpdir)
 
-def Vol2Surf(subjects, input_files, funcdirs=None, fsdir=os.environ["SUBJECTS_DIR"], map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard', std141=False, keep_temp=False):
+def Vol2Surf(experiment_fmri_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, sessions=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard', std141=False, keep_temp=False):
     """
     Function for converting from volume to surface space.  
     Supports suma surfaces both in native and std141 space.
@@ -461,19 +470,16 @@ def Vol2Surf(subjects, input_files, funcdirs=None, fsdir=os.environ["SUBJECTS_DI
     
     Parameters
     ------------
-    subjects : list of strings
-        Subjects that are to be run. Example : ['sub-0001','sub-0002']
-    input_files : list of strings
-        All files that are to be converted from volume to surface.
-        If no funcdirs are to be provided then a directory should be
-        provided as part of filename
-        Example : ['/Volumes/Users/Experiment/fmriprep/sub-0001/ses-01/func/file_name1.gii'...]
-    funcdirs : list of strings, default None
-        Contains the functional directory for each subject
-        Example : ['/Volumes/Users/Experiment/fmriprep/sub-001/ses-01/func',
-                   '/Volumes/Users/Experiment/fmriprep/sub-002/ses-01/func']
+    experiment_fmri_dir : string
+        The directory for the fmri data for the experiment
+        Example: '/Volumes/Computer/Users/Username/Experiment/fmriprep'
     fsdir : string, default os.environ["SUBJECTS_DIR"]
         Freesurfer directory
+    subjects : list of strings, Default None
+        Optional parameter, if wish to limit function to only certain subjects
+        that are to be run. Example : ['sub-0001','sub-0002']
+    sessions : list of strings, Default None
+        Optional parameter, if wish to limit function to only certain sessions
     map_func : string, default 'ave'
         Parameter for AFNI 3dVol2Surf function. Parameter is:
         map_func. Options - 'ave', 'mask', 'seg_vals'
@@ -498,7 +504,6 @@ def Vol2Surf(subjects, input_files, funcdirs=None, fsdir=os.environ["SUBJECTS_DI
     mask : string, default None
         Parameter for AFNI 3dVol2Surf function. Parameter is:
         cmask. Produces a mask to be applied to input AFNI dataset.
-    
     surf_vol : string, default 'standard'
         File location of volume directory/file
     std141 : Boolean, default False
@@ -511,31 +516,27 @@ def Vol2Surf(subjects, input_files, funcdirs=None, fsdir=os.environ["SUBJECTS_DI
     file_list : list of strings
         This is a list of all files created by the function
     """
-    
-    # Check if a functional directory has been defined
-    if funcdirs is None:
-        # adding check to ensure that input_files have correct format
-        assert [files for files in input_files if '/func/' in files]==input_files,"Please provide funcdir, or add functional directory to each file name"
+    # Create a dictionary of files - keys are the directory for each session
+    file_dictionary = create_file_dictionary(experiment_fmri_dir)
+    # Remove unwanted subjects and sessions
+    if subjects != None:
+        file_dictionary = {directory : file_dictionary[directory] for directory in file_dictionary.keys() 
+                           if directory[len(experiment_fmri_dir)+1:].split('/')[0] in subjects}
+    if sessions != None:
+        file_dictionary = {directory : file_dictionary[directory] for directory in file_dictionary.keys()
+                          if directory[len(experiment_fmri_dir)+1:].split('/')[1] in sessions}
     # list of files created by this function
-        file_list = []
+    file_list = []
     # Dict to convert between old and new hemisphere notation
-        hemi_dic = {'lh' : 'L', 'rh' : 'R'}
+    hemi_dic = {'lh' : 'L', 'rh' : 'R'}
         
     # Iterate over subjects
-    for subject in subjects:
+    for directory in file_dictionary.keys():
+        # pull out subject title - i.e. 'sub-0001'
+        subject = directory[len(experiment_fmri_dir)+1:].split('/')[0]
         print('Running subject: {0}'.format(subject))
-        
-        # Identify just the files for each subject
-        in_files = [files for files in input_files if subject in files]
-        if funcdirs is None:
-            # define current directory where no funcdirs are provided
-            cur_dir = "/".join(in_files[0].split('/')[:-1])
-            # remove current directory string from each file string
-            in_files = [files[len(cur_dir)+1:] for files in in_files]
-        else:
-            # current directory is matched for each subject
-            cur_dir = [func for func in funcdirs if subject in func][0]
-        print(cur_dir)
+        cur_dir = directory
+        in_files = file_dictionary[directory]
         # Define the names to be used for file output
         criteria_list = ['sub','ses','task','run','space']
         input_format = 'bids'
