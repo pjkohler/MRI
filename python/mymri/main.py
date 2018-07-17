@@ -1,4 +1,4 @@
-import os, subprocess, sys, glob, shutil, tempfile, re
+import os, subprocess, sys, glob, shutil, tempfile, re, stat
 from os.path import expanduser
 from nilearn import datasets, surface
 import numpy as np
@@ -136,14 +136,55 @@ def eigFourierCoefs(xyData):
            smaller_eigenval,larger_eigenvec, 
            larger_eigenval, phi)
 
-def subjectFmriData(sub, fmriFolder,std141=False):
-    fmridir= '{0}/{1}/ses-01/func/'.format(fmriFolder,sub)
+def subjectFmriData(sub, fmriFolder,std141=False,session='01'):
+    fmridir= '{0}/{1}/ses-{2}/func/'.format(fmriFolder,sub,session)
     # returns files needed to run RoiSurfData
     if std141==True:
         return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
     else:
         return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
-    
+
+def make_hard_links(bidsdir,experiment,subjects,fsdir):
+    """Function creates hardlinks from freesurfer directory to the experiment folder
+
+    Parameters
+    ------------
+    bidsdir : string
+        The directory for BIDS Analysis. Should contain the freesurfer folder and experiment folder.
+    experiment : string
+        Used for location of the experiment folder within the BIDS directory
+    subjects : list of strings
+        This is a list of the subjects that require hardlinks to be made
+    fsdir : string
+        The freesurfer directory
+    Returns
+    ------------
+    checking_dic : dictionary
+        Contains the source and destination of the files. Used for checking that the new directory 
+        is actually a hard link of the old one.
+    """
+    checking_dic = {}
+    for sub in subjects:
+        src = "{0}/{1}".format(fsdir,sub)
+        dst = "{0}/{1}/freesurfer/{2}".format(bidsdir,experiment,sub)
+        os.link(src,dst)
+        checking_dic[sub] = [src,dst]
+    check_hard_links(checking_dic)
+    return checking_dic
+def check_hard_links(checking_dic):
+    correct_int = 0
+    error_log = []
+    for key in checking_dic.keys():
+        l1 = checking_dic[key][0]
+        l2 = checking_dic[key][1]
+        if (l1[stat.ST_INO],l1[stat.ST_DEV]) == (l2[stat.ST_INO], l2[stat.ST_DEV]):
+            correct_int+=1
+        else:
+            error_log.append(l2)
+    if correct_int == len(checking_dic):
+        print('All new files are hardlinks')
+    else:
+        print('Files not hard link: \n {0}'.format(error_log))   
     
 
 ## CLASSES
@@ -403,7 +444,7 @@ def Scale(in_files, no_dt=False, keep_temp=False):
         # remove temporary directory
         shutil.rmtree(tmpdir)
 
-def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, fsdir=os.environ["SUBJECTS_DIR"], surf_vol='standard', std141=False, keep_temp=False):
+def Vol2Surf(subjects, input_files, funcdirs=None, fsdir=os.environ["SUBJECTS_DIR"], map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard', std141=False, keep_temp=False):
     """
     Function for converting from volume to surface space.  
     Supports suma surfaces both in native and std141 space.
@@ -420,13 +461,19 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
     
     Parameters
     ------------
-    subject : string
-        Subject that is to be run. Example : 'sub-0039'
-    in_files : list of strings
-        All files that are to be converted from volume to surface
-    funcdir : string, default None
-        The directory of functional data. If not provided then current
-        directory is used.
+    subjects : list of strings
+        Subjects that are to be run. Example : ['sub-0001','sub-0002']
+    input_files : list of strings
+        All files that are to be converted from volume to surface.
+        If no funcdirs are to be provided then a directory should be
+        provided as part of filename
+        Example : ['/Volumes/Users/Experiment/fmriprep/sub-0001/ses-01/func/file_name1.gii'...]
+    funcdirs : list of strings, default None
+        Contains the functional directory for each subject
+        Example : ['/Volumes/Users/Experiment/fmriprep/sub-001/ses-01/func',
+                   '/Volumes/Users/Experiment/fmriprep/sub-002/ses-01/func']
+    fsdir : string, default os.environ["SUBJECTS_DIR"]
+        Freesurfer directory
     map_func : string, default 'ave'
         Parameter for AFNI 3dVol2Surf function. Parameter is:
         map_func. Options - 'ave', 'mask', 'seg_vals'
@@ -451,8 +498,7 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
     mask : string, default None
         Parameter for AFNI 3dVol2Surf function. Parameter is:
         cmask. Produces a mask to be applied to input AFNI dataset.
-    fsdir : string, default os.environ["SUBJECTS_DIR"]
-        Freesurfer directory
+    
     surf_vol : string, default 'standard'
         File location of volume directory/file
     std141 : Boolean, default False
@@ -465,114 +511,126 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
     file_list : list of strings
         This is a list of all files created by the function
     """
-    print('Running subject: {0}'.format(subject))
+    
     # Check if a functional directory has been defined
-    if funcdir is None:
-        # get current directory    
-        cur_dir = os.getcwd()
-    else:
-        cur_dir = funcdir
-    
+    if funcdirs is None:
+        # adding check to ensure that input_files have correct format
+        assert [files for files in input_files if '/func/' in files]==input_files,"Please provide funcdir, or add functional directory to each file name"
     # list of files created by this function
-    file_list = []
-    # convert between old and new hemisphere notation
-    hemi_dic = {'lh' : 'L', 'rh' : 'R'}
-    
-    # Define the names to be used for file output
-    criteria_list = ['sub','ses','task','run','space']
-    input_format = 'bids'
-    output_name_dic = {}
-    for cur_file in in_files:
-        file_name, file_suffix = get_name_suffix(cur_file)
-        # Checking for bids formatting
-        if not sum([crit in file_name for crit in criteria_list]) == len(criteria_list):
-            input_format = 'non-bids'
-        if input_format == 'bids':
-            old = re.findall('space-\w+_',file_name)[0]
-            if std141 == False:
-                new = 'space-surf.native_'
-            else:
-                new = 'space-surf.std141_'
-            output_name_dic[file_name] = file_name.replace(old,new)
+        file_list = []
+    # Dict to convert between old and new hemisphere notation
+        hemi_dic = {'lh' : 'L', 'rh' : 'R'}
+        
+    # Iterate over subjects
+    for subject in subjects:
+        print('Running subject: {0}'.format(subject))
+        
+        # Identify just the files for each subject
+        in_files = [files for files in input_files if subject in files]
+        if funcdirs is None:
+            # define current directory where no funcdirs are provided
+            cur_dir = "/".join(in_files[0].split('/')[:-1])
+            # remove current directory string from each file string
+            in_files = [files[len(cur_dir)+1:] for files in in_files]
         else:
-            if std141 == False:
-                new = 'space-surf.native'
-            elif std141 == True:
-                new = 'space-surf.std141'
-            output_name_dic[file_name] = '{0}_{1}'.format(file_name, new)
-
-    # make temporary, local folder
-    tmp_dir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))   
-    
-    # check if subjects' SUMA directory exists
-    suffix = fs_dir_check(fsdir,subject)
-    suma_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix)
-
-    
-    if wm_mod is not 0.0 or gm_mod is not 0.0:
-        # for gm, positive values makes the distance longer, for wm negative values
-        steps = round(steps + steps * gm_mod - steps * wm_mod)
-    
-    print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
-
-    if surf_vol is "standard":
-        vol_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix) 
-        vol_file = "{0}{1}_SurfVol.nii".format(subject,suffix)
-    else:
-        vol_dir = '/'.join(surf_vol.split('/')[0:-1])
-        vol_file = surf_vol.split('/')[-1]
-        if not vol_dir: # if volume directory is empty
-            vol_dir = cur_dir
-
-    # make temporary copy of volume file     
-    subprocess.call("3dcopy {0}/{1} {2}/{1}".format(vol_dir,vol_file,tmp_dir), shell=True)
-
-    # now get specfiles
-    if prefix is None:
-        prefix = "."
-    else:
-        prefix = ".{0}.".format(prefix)    
-    
-    if std141:
-        specprefix = "std.141."
-        prefix = ".std.141{0}".format(prefix)
-    else:
-        specprefix = ""    
-    # copy Suma files into the temporary directory
-    copy_suma_files(suma_dir,tmp_dir,subject,spec_prefix=specprefix)
-    
-    os.chdir(tmp_dir)
-    for cur_file in in_files:
-        file_name, file_suffix = get_name_suffix(cur_file)
-        # unzip the .nii.gz files into .nii files
-        shell_cmd("gunzip -c {0}/{1}.nii.gz > {2}/{1}.nii".format(cur_dir,file_name,tmp_dir),do_print=False)
-        if mask is None:
-            # no mask
-            maskcode = ""
-        else:
-            if mask is 'data':
-                # mask from input data
-                maskcode = "-cmask '-a {0}[0] -expr notzero(a)' ".format(file_name)
+            # current directory is matched for each subject
+            cur_dir = [func for func in funcdirs if subject in func][0]
+        print(cur_dir)
+        # Define the names to be used for file output
+        criteria_list = ['sub','ses','task','run','space']
+        input_format = 'bids'
+        output_name_dic = {}
+        for cur_file in in_files:
+            file_name, file_suffix = get_name_suffix(cur_file)
+            # Checking for bids formatting
+            if not sum([crit in file_name for crit in criteria_list]) == len(criteria_list):
+                input_format = 'non-bids'
+            if input_format == 'bids':
+                old = re.findall('space-\w+_',file_name)[0]
+                if std141 == False:
+                    new = 'space-surf.native_'
+                else:
+                    new = 'space-surf.std141_'
+                output_name_dic[file_name] = file_name.replace(old,new)
             else:
-                # mask from distinct dataset, copy mask to folder
-                mask_name, mask_suffix = get_name_suffix(mask)
-                subprocess.call("3dcopy {1}/{0}{2} mask+orig".format(mask_name,cur_dir,mask_suffix), shell=True)
-                maskcode = "-cmask '-a mask+orig[0] -expr notzero(a)' "
-        for hemi in ["lh","rh"]:
-            output_file_name = "{0}.{1}.func".format(output_name_dic[file_name],hemi_dic[hemi])
-            # Converts volume to surface space - output in .niml.dset
-            shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
-                    -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.nii -map_func {6} \
-                    -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
-                    -outcols_NSD_format -oob_value -0 {12}-out_niml {14}/{13}.niml.dset"
-                    .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,cur_dir,maskcode,output_file_name,tmp_dir), do_print=False)
-            # Converts the .niml.dset into a .gii file in the functional directory
-            shell_cmd("ConvertDset -o_gii_asc -input {1}/{0}.niml.dset -prefix {2}/{0}.gii".format(output_file_name,tmp_dir,cur_dir),do_print=False)
-            file_list.append('{1}/{0}'.format(output_file_name,cur_dir))            
-    os.chdir(cur_dir) 
-    if keep_temp is not True:
-        # remove temporary directory
-        shutil.rmtree(tmp_dir)
+                if std141 == False:
+                    new = 'space-surf.native'
+                elif std141 == True:
+                    new = 'space-surf.std141'
+                output_name_dic[file_name] = '{0}_{1}'.format(file_name, new)
+
+        # make temporary, local folder
+        tmp_dir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))   
+
+        # check if subjects' SUMA directory exists
+        suffix = fs_dir_check(fsdir,subject)
+        suma_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix)
+
+
+        if wm_mod is not 0.0 or gm_mod is not 0.0:
+            # for gm, positive values makes the distance longer, for wm negative values
+            steps = round(steps + steps * gm_mod - steps * wm_mod)
+
+        print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
+
+        if surf_vol is "standard":
+            vol_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix) 
+            vol_file = "{0}{1}_SurfVol.nii".format(subject,suffix)
+        else:
+            vol_dir = '/'.join(surf_vol.split('/')[0:-1])
+            vol_file = surf_vol.split('/')[-1]
+            if not vol_dir: # if volume directory is empty
+                vol_dir = cur_dir
+
+        # make temporary copy of volume file     
+        subprocess.call("3dcopy {0}/{1} {2}/{1}".format(vol_dir,vol_file,tmp_dir), shell=True)
+
+        # now get specfiles
+        if prefix is None:
+            prefix = "."
+        else:
+            prefix = ".{0}.".format(prefix)    
+
+        if std141:
+            specprefix = "std.141."
+            prefix = ".std.141{0}".format(prefix)
+        else:
+            specprefix = ""    
+        # copy Suma files into the temporary directory
+        copy_suma_files(suma_dir,tmp_dir,subject,spec_prefix=specprefix)
+
+        os.chdir(tmp_dir)
+        for cur_file in in_files:
+            file_name, file_suffix = get_name_suffix(cur_file)
+            # unzip the .nii.gz files into .nii files
+            shell_cmd("gunzip -c {0}/{1}.nii.gz > {2}/{1}.nii".format(cur_dir,file_name,tmp_dir),do_print=False)
+            if mask is None:
+                # no mask
+                maskcode = ""
+            else:
+                if mask is 'data':
+                    # mask from input data
+                    maskcode = "-cmask '-a {0}[0] -expr notzero(a)' ".format(file_name)
+                else:
+                    # mask from distinct dataset, copy mask to folder
+                    mask_name, mask_suffix = get_name_suffix(mask)
+                    subprocess.call("3dcopy {1}/{0}{2} mask+orig".format(mask_name,cur_dir,mask_suffix), shell=True)
+                    maskcode = "-cmask '-a mask+orig[0] -expr notzero(a)' "
+            for hemi in ["lh","rh"]:
+                output_file_name = "{0}.{1}.func".format(output_name_dic[file_name],hemi_dic[hemi])
+                # Converts volume to surface space - output in .niml.dset
+                shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
+                        -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.nii -map_func {6} \
+                        -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
+                        -outcols_NSD_format -oob_value -0 {12}-out_niml {14}/{13}.niml.dset"
+                        .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,cur_dir,maskcode,output_file_name,tmp_dir), do_print=False)
+                # Converts the .niml.dset into a .gii file in the functional directory
+                shell_cmd("ConvertDset -o_gii_asc -input {1}/{0}.niml.dset -prefix {2}/{0}.gii".format(output_file_name,tmp_dir,cur_dir),do_print=False)
+                file_list.append('{1}/{0}'.format(output_file_name,cur_dir))            
+        os.chdir(cur_dir) 
+        if keep_temp is not True:
+            # remove temporary directory
+            shutil.rmtree(tmp_dir)
     print('Vol2Surf run complete')
     return file_list
 
@@ -1335,7 +1393,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
     
     outnames = [x+"-L" for x in newlabel] + [x+"-R" for x in newlabel] + [x+"-BL" for x in newlabel]
     # create a list of outdata, with shared values 
-    outdata = [ roiobject(is_time_series=is_time_series,roiname=x,tr=TR,nharm=5,stimfreq=10,offset=offset) for x in outnames ]
+    outdata = [ roiobject(is_time_series=is_time_series,roiname=name,tr=TR,nharm=5,stimfreq=10,offset=offset) for name in outnames ]
 
     print("APPLYING RH ROI: " + l_roifile.split("/")[-1] + " TO DATA:")
     for x in l_files: print(x.split("/")[-1])
@@ -1397,9 +1455,6 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
             except OSError as err:
                 print("Data file: {0} could not be opened".format(run_file))
             data_n = cur_data.shape[0]
-            # testing
-            print('shape of surface data: {0}'.format(cur_data.shape))
-            print('roi shape: {0}'.format(roi_n))
             assert data_n == roi_n, "Data and ROI have different number of surface vertices"
             for roi_name in newlabel:
                 # note,  account for one-indexing of ROIs
@@ -1748,7 +1803,7 @@ def fitErrorEllipse(xyData, ellipseType='SEM', makePlot=False, returnRad=False):
         plt.show()
     return ampDiff, phaseDiff, zSNR, errorEllipse
 
-def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre_tr=0, roi='wang+benson',tasks=None, offset=None,std141=False):
+def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre_tr=0, roi='wang+benson',session='01',tasks=None, offset=None,std141=False):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -1767,6 +1822,8 @@ def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre
         input for RoiSurfData - please see for more info
     roi : str, default 'wang+benson'
         other options as per RoiSurfData function
+    session : str, default '01'
+        The fmri session
     tasks : list, default None
         Processing to be split by task and run 
         separately
@@ -1796,7 +1853,7 @@ def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre
         print('No task provided. Data to be run together.')
         for sub_int, sub in enumerate(subjects):
             # produce list of files 
-            surf_files = subjectFmriData(sub, fmriFolder,std141=std141)
+            surf_files = subjectFmriData(sub, fmriFolder,std141=std141,session=session)
             # run RoiSurfData
             outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
             # Define the empty array we want to fill or concatenate together
@@ -1810,7 +1867,7 @@ def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre
         for task in tasks:
             for sub_int, sub in enumerate(subjects):
                 # produce list of files 
-                surf_files = [f for f in subjectFmriData(sub, fmriFolder, std141=std141) if task in f]
+                surf_files = [f for f in subjectFmriData(sub, fmriFolder, std141=std141,session=session) if task in f]
                 # run RoiSurfData
                 outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset[task])
                 # Define the empty array we want to fill or concatenate together
