@@ -1892,13 +1892,14 @@ def combineHarmonics(fmriFolder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All'
             for sub_int, sub in enumerate(subjects):
                 # produce list of files 
                 surf_files = [f for f in subjectFmriData(sub, fmriFolder, std141=std141,session=session) if task in f]
-                # run RoiSurfData
-                outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset[task])
-                # Define the empty array we want to fill or concatenate together
-                if sub_int == 0:
-                    outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
-                else:
-                    outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
+                if len(surf_files)>0:
+                    # run RoiSurfData
+                    outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset[task])
+                    # Define the empty array we want to fill or concatenate together
+                    if sub_int == 0:
+                        outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
+                    else:
+                        outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
             task_dic[task], outnames = outdata_arr, outnames
         return task_dic, outnames
 
@@ -1952,7 +1953,7 @@ def applyFitErrorEllipse(combined_harmonics, outnames, ampPhaseZsnr_output='all'
             for roi in range(roi_n):
                 errorEllipseName = '{0}_harmonic_{1}'.format(outnames[roi],harmonic)
                 xyData = combined_harmonics[task][roi,harmonic,:]
-                xyData = np.reshape(xyData,(len(xyData),1))
+                xyData = np.reshape(xyData,(xyData.size,1))
                 ampDiff, phaseDiff, zSNR, errorEllipse = fitErrorEllipse(xyData,ellipseType,makePlot,returnRad)
                 errorEllipse_dic[errorEllipseName] = errorEllipse
                 if roi==0 and harmonic ==0:
