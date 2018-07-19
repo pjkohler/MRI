@@ -136,13 +136,24 @@ def eigFourierCoefs(xyData):
            smaller_eigenval,larger_eigenvec, 
            larger_eigenval, phi)
 
-def subjectFmriData(sub, fmriFolder,std141=False,session='01'):
-    fmridir= '{0}/{1}/ses-{2}/func/'.format(fmriFolder,sub,session)
-    # returns files needed to run RoiSurfData
-    if std141==True:
-        return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
+def subjectFmriData(sub, fmriFolder,std141=False,session='all'):
+    if session=='all':
+        session_folders = [subject_session for subject_session in os.listdir('{0}/{1}'.format(fmriFolder,sub)) if 'ses' in subject_session]
+        file_list = []
+        for subject_session in session_folders:
+            fmridir = '{0}/{1}/{2}/func/'.format(fmriFolder,sub,subject_session)
+            if std141 == True:
+                file_list += [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
+            else:
+                file_list += [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
     else:
-        return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
+        fmridir= '{0}/{1}/ses-{2}/func/'.format(fmriFolder,sub,session)
+        # returns files needed to run RoiSurfData
+        if std141==True:
+            file_list = [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
+        else:
+            file_list = [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
+    return file_list
 
 def create_file_dictionary(experiment_fmri_dir):
     # creates file dictionary necessary for Vol2Surf
@@ -1804,30 +1815,34 @@ def fitErrorEllipse(xyData, ellipseType='SEM', makePlot=False, returnRad=False):
         plt.show()
     return ampDiff, phaseDiff, zSNR, errorEllipse
 
-def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre_tr=0, roi='wang+benson',session='01',tasks=None, offset=None,std141=False):
+def combineHarmonics(fmriFolder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All', pre_tr=0, roi='wang+benson',session='all',tasks='All', offset=None,std141=False):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
     provided then 
     This uses the RoiSurfData function carry out FFT.
     Parameters
-    ------------
-    subjects : list
-        List of all subjects to submit
+    ------------ 
     fmriFolder : string
         Folder location, required to identify files
         to be used
     fsdir : string/os file location, default to SUBJECTS_DIR
         Freesurfer folder directory
+    subjects : string/list, Default 'All'
+        Options:
+            - 'All' - identifies and runs all subjects
+            - ['sub-0001','sub-0002'] - runs only a list of subjects
     pre_tr : int, default 0
         input for RoiSurfData - please see for more info
     roi : str, default 'wang+benson'
         other options as per RoiSurfData function
     session : str, default '01'
         The fmri session
-    tasks : list, default None
-        Processing to be split by task and run 
-        separately
+    tasks : list/string, default 'All'
+        Options: 
+            'All' - runs all tasks separately
+            ['task1','task2'] - runs a subset of tasks
+            None - If there is only one task
     offset : dictionary, default None
         offset to be applied to relevant tasks:
         Positive values means the first data frame was 
@@ -1849,7 +1864,15 @@ def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre
     outnames : list
         a list of strings, containing RoIs
     """
+    if subjects == 'All':
+        subjects = [files for files in os.listdir(fmriFolder) if 'sub' in files and 'html' not in files]
     task_dic={}
+    task_list=[]
+    if tasks=='All':
+        for sub in subjects:
+            task_list+=subjectFmriData(sub,fmriFolder)
+        task_list=[re.findall('task-\w+_',x)[0][5:-1] for x in task_list]
+        tasks = list(set(task_list))
     if tasks==None:
         print('No task provided. Data to be run together.')
         for sub_int, sub in enumerate(subjects):
@@ -1863,7 +1886,7 @@ def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre
             else:
                 outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
         task_dic['task'], outnames = outdata_arr, outnames
-        return task_dic
+        return task_dic, outnames
     else:
         for task in tasks:
             for sub_int, sub in enumerate(subjects):
@@ -1901,65 +1924,71 @@ def applyFitErrorEllipse(combined_harmonics, outnames, ampPhaseZsnr_output='all'
     
     Returns
     ------------
-    ampPhaseZSNR_df : pd.DataFrame,
-        contains RoIs as index, amp difference lower/upper, 
-        phase difference lower/upper, zSNR
-    errorEllipse_dic : dictionary,
-        contains a dictionary of numpy arrays of the 
-        error ellipses broken down by RoI.
+    output_dictionary : dictionary
+        broken down by task to include:
+            ampPhaseZSNR_df : pd.DataFrame,
+                contains RoIs as index, amp difference lower/upper, 
+                phase difference lower/upper, zSNR
+            errorEllipse_dic : dictionary,
+                contains a dictionary of numpy arrays of the 
+                error ellipses broken down by RoI.
     """ 
 
-    # dictionary for output of error Ellipse
-    errorEllipse_dic={}
-    # number of rois, harmonics, subjects
-    roi_n, harmonics_n, subjects_n = combined_harmonics.shape
-    # to be used to create the final columns in the dataframe
-    harmonic_name_list = ['RoIs']
+    output_dictionary = {}
 
-    # Loop through harmonics & rois
-    for harmonic in range(harmonics_n):
-        print('Working on harmonic: {0}'.format(harmonic + 1))
-        harmonic_measures=[measure+str(harmonic+1) for measure in ['AmpDiffLower','AmpDiffHigher','PhaseDiffLower','PhaseDiffHigher','zSNR']]
-        harmonic_name_list+=harmonic_measures
-        for roi in range(roi_n):
-            errorEllipseName = '{0}_harmonic_{1}'.format(outnames[roi],harmonic)
-            xyData = combined_harmonics[roi,harmonic,:]
-            xyData = np.reshape(xyData,(len(xyData),1))
-            ampDiff, phaseDiff, zSNR, errorEllipse = fitErrorEllipse(xyData,ellipseType,makePlot,returnRad)
-            errorEllipse_dic[errorEllipseName] = errorEllipse
-            if roi==0 and harmonic ==0:
-                t=np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
-            elif harmonic == 0:
-                t=np.concatenate((t,np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
-            elif roi==0:
-                t=np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
+    for task in combined_harmonics.keys():
+        # dictionary for output of error Ellipse
+        errorEllipse_dic={}
+        # number of rois, harmonics, subjects
+        roi_n, harmonics_n, subjects_n = combined_harmonics[task].shape
+        # to be used to create the final columns in the dataframe
+        harmonic_name_list = ['RoIs']
+        
+        # Loop through harmonics & rois
+        for harmonic in range(harmonics_n):
+            print('Working on harmonic: {0}'.format(harmonic + 1))
+            harmonic_measures=[measure+str(harmonic+1) for measure in ['AmpDiffLower','AmpDiffHigher','PhaseDiffLower','PhaseDiffHigher','zSNR']]
+            harmonic_name_list+=harmonic_measures
+            for roi in range(roi_n):
+                errorEllipseName = '{0}_harmonic_{1}'.format(outnames[roi],harmonic)
+                xyData = combined_harmonics[task][roi,harmonic,:]
+                xyData = np.reshape(xyData,(len(xyData),1))
+                ampDiff, phaseDiff, zSNR, errorEllipse = fitErrorEllipse(xyData,ellipseType,makePlot,returnRad)
+                errorEllipse_dic[errorEllipseName] = errorEllipse
+                if roi==0 and harmonic ==0:
+                    t=np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
+                elif harmonic == 0:
+                    t=np.concatenate((t,np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
+                elif roi==0:
+                    t=np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
+                else:
+                    t=np.concatenate((t,np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
+            if harmonic == 0:
+                overall=t
             else:
-                t=np.concatenate((t,np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
-        if harmonic == 0:
-            overall=t
+                overall=np.concatenate((overall,t),axis=1)
+        
+        # construct dataframe for output
+        ampPhaseZSNR_df=pd.DataFrame(data=overall,columns=harmonic_name_list,index=outnames)
+        ampPhaseZsnr_output = str(ampPhaseZsnr_output).lower()
+        phase = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Phase' in col]]
+        amp = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Amp' in col]]
+        zSNR = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'z' in col]]
+        
+        if ampPhaseZsnr_output == 'all':
+            concat_columns = [phase, amp, zSNR]
         else:
-            overall=np.concatenate((overall,t),axis=1)
-    
-    # construct dataframe for output
-    ampPhaseZSNR_df=pd.DataFrame(data=overall,columns=harmonic_name_list,index=outnames)
-    ampPhaseZsnr_output = str(ampPhaseZsnr_output).lower()
-    phase = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Phase' in col]]
-    amp = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Amp' in col]]
-    zSNR = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'z' in col]]
-    
-    if ampPhaseZsnr_output == 'all':
-        concat_columns = [phase, amp, zSNR]
-    else:
-        concat_columns = []
-        if 'phase' in ampPhaseZsnr_output:
-            concat_columns.append(phase)
-        if 'amp' in ampPhaseZsnr_output:
-            concat_columns.append(phase)
-        if 'zsnr' in ampPhaseZsnr_output:
-            concat_columns.append(zSNR)
-    ampPhaseZSNR_df = pd.concat((concat_columns),axis=1)
-    print('DataFrame constructed')
-    return ampPhaseZSNR_df, errorEllipse_dic
+            concat_columns = []
+            if 'phase' in ampPhaseZsnr_output:
+                concat_columns.append(phase)
+            if 'amp' in ampPhaseZsnr_output:
+                concat_columns.append(phase)
+            if 'zsnr' in ampPhaseZsnr_output:
+                concat_columns.append(zSNR)
+        ampPhaseZSNR_df = pd.concat((concat_columns),axis=1)
+        print('DataFrame constructed')
+        output_dictionary[task] = [ampPhaseZSNR_df, errorEllipse_dic]
+    return output_dictionary
 def graphRois(combined_harmonics,outnames,subjects=None,plot_by_subject=False,harmonic=1,rois=['V1','V2','V3'],hemisphere='BL',figsize=6):
     """This function will graph RoI data. 
     Parameters
