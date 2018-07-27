@@ -658,7 +658,7 @@ def BidsOrganizer(
 	record=None, 
 	study_id=None,
 	bids_dir='/Volumes/svndl/RAW_DATA/MRI_RAW', 
-	temp_dir='/Volumes/Denali_4D2/TEMP',
+	temp_dir='/Volumes/Denali_DATA1/TEMP',
 	run_all=False, 
 	deface=False,
 	update_metadata=False):
