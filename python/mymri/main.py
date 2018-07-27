@@ -1,4 +1,4 @@
-import os, subprocess, sys, glob, shutil, tempfile, re
+import os, subprocess, sys, glob, shutil, tempfile, re, stat
 from os.path import expanduser
 from nilearn import datasets, surface
 import numpy as np
@@ -96,6 +96,12 @@ def realImagSplit(sig_complex):
     sig_complex=np.concatenate((np.real(sig_complex),np.imag(sig_complex)),axis=1)
     return sig_complex
 
+def flatten_1d(arr):
+    # function to flatten data into 1 dimension
+    arr = arr.flatten()
+    arr = arr.reshape(len(arr),1)
+    return arr
+
 def eigFourierCoefs(xyData):
     """Performs eigenvalue decomposition
     on 2D data. Function assumes 2D
@@ -136,14 +142,75 @@ def eigFourierCoefs(xyData):
            smaller_eigenval,larger_eigenvec, 
            larger_eigenval, phi)
 
-def subjectFmriData(sub, fmriFolder,std141=False):
-    fmridir= '{0}/{1}/ses-01/func/'.format(fmriFolder,sub)
-    # returns files needed to run RoiSurfData
-    if std141==True:
-        return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
+def subjectFmriData(sub, fmriFolder,std141=False,session='all'):
+    if session=='all':
+        session_folders = [subject_session for subject_session in os.listdir('{0}/{1}'.format(fmriFolder,sub)) if 'ses' in subject_session]
+        file_list = []
+        for subject_session in session_folders:
+            fmridir = '{0}/{1}/{2}/func/'.format(fmriFolder,sub,subject_session)
+            if std141 == True:
+                file_list += [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
+            else:
+                file_list += [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
     else:
-        return [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
-    
+        fmridir= '{0}/{1}/ses-{2}/func/'.format(fmriFolder,sub,session)
+        # returns files needed to run RoiSurfData
+        if std141==True:
+            file_list = [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
+        else:
+            file_list = [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
+    return file_list
+
+def create_file_dictionary(experiment_fmri_dir):
+    # creates file dictionary necessary for Vol2Surf
+    subjects = [folder for folder in os.listdir(experiment_fmri_dir) if 'sub' in folder and '.html' not in folder]
+    subject_session_dic = {subject: [session for session in os.listdir("{0}/{1}".format(experiment_fmri_dir,subject)) if 'ses' in session] for subject in subjects}
+    subject_session_directory = []
+    for subject in subjects:
+        subject_session_directory += ["{0}/{1}/{2}/func".format(experiment_fmri_dir,subject,session) for session in subject_session_dic[subject]]
+    files_dic = {directory : [files for files in os.listdir(directory) if 'preproc.nii.gz' in files] for directory in subject_session_directory}
+    return files_dic
+def make_hard_links(bidsdir,experiment,subjects,fsdir):
+    """Function creates hardlinks from freesurfer directory to the experiment folder
+
+    Parameters
+    ------------
+    bidsdir : string
+        The directory for BIDS Analysis. Should contain the freesurfer folder and experiment folder.
+    experiment : string
+        Used for location of the experiment folder within the BIDS directory
+    subjects : list of strings
+        This is a list of the subjects that require hardlinks to be made
+    fsdir : string
+        The freesurfer directory
+    Returns
+    ------------
+    checking_dic : dictionary
+        Contains the source and destination of the files. Used for checking that the new directory 
+        is actually a hard link of the old one.
+    """
+    checking_dic = {}
+    for sub in subjects:
+        src = "{0}/{1}".format(fsdir,sub)
+        dst = "{0}/{1}/freesurfer/{2}".format(bidsdir,experiment,sub)
+        os.link(src,dst)
+        checking_dic[sub] = [src,dst]
+    check_hard_links(checking_dic)
+    return checking_dic
+def check_hard_links(checking_dic):
+    correct_int = 0
+    error_log = []
+    for key in checking_dic.keys():
+        l1 = checking_dic[key][0]
+        l2 = checking_dic[key][1]
+        if (l1[stat.ST_INO],l1[stat.ST_DEV]) == (l2[stat.ST_INO], l2[stat.ST_DEV]):
+            correct_int+=1
+        else:
+            error_log.append(l2)
+    if correct_int == len(checking_dic):
+        print('All new files are hardlinks')
+    else:
+        print('Files not hard link: \n {0}'.format(error_log))   
     
 
 ## CLASSES
@@ -403,7 +470,7 @@ def Scale(in_files, no_dt=False, keep_temp=False):
         # remove temporary directory
         shutil.rmtree(tmpdir)
 
-def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, fsdir=os.environ["SUBJECTS_DIR"], surf_vol='standard', std141=False, keep_temp=False):
+def Vol2Surf(experiment_fmri_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, sessions=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard', std141=False, keep_temp=False):
     """
     Function for converting from volume to surface space.  
     Supports suma surfaces both in native and std141 space.
@@ -420,13 +487,16 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
     
     Parameters
     ------------
-    subject : string
-        Subject that is to be run. Example : 'sub-0039'
-    in_files : list of strings
-        All files that are to be converted from volume to surface
-    funcdir : string, default None
-        The directory of functional data. If not provided then current
-        directory is used.
+    experiment_fmri_dir : string
+        The directory for the fmri data for the experiment
+        Example: '/Volumes/Computer/Users/Username/Experiment/fmriprep'
+    fsdir : string, default os.environ["SUBJECTS_DIR"]
+        Freesurfer directory
+    subjects : list of strings, Default None
+        Optional parameter, if wish to limit function to only certain subjects
+        that are to be run. Example : ['sub-0001','sub-0002']
+    sessions : list of strings, Default None
+        Optional parameter, if wish to limit function to only certain sessions
     map_func : string, default 'ave'
         Parameter for AFNI 3dVol2Surf function. Parameter is:
         map_func. Options - 'ave', 'mask', 'seg_vals'
@@ -451,8 +521,6 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
     mask : string, default None
         Parameter for AFNI 3dVol2Surf function. Parameter is:
         cmask. Produces a mask to be applied to input AFNI dataset.
-    fsdir : string, default os.environ["SUBJECTS_DIR"]
-        Freesurfer directory
     surf_vol : string, default 'standard'
         File location of volume directory/file
     std141 : Boolean, default False
@@ -465,114 +533,122 @@ def Vol2Surf(subject, in_files, funcdir=None, map_func='ave', wm_mod=0.0, gm_mod
     file_list : list of strings
         This is a list of all files created by the function
     """
-    print('Running subject: {0}'.format(subject))
-    # Check if a functional directory has been defined
-    if funcdir is None:
-        # get current directory    
-        cur_dir = os.getcwd()
-    else:
-        cur_dir = funcdir
-    
+    # Create a dictionary of files - keys are the directory for each session
+    file_dictionary = create_file_dictionary(experiment_fmri_dir)
+    # Remove unwanted subjects and sessions
+    if subjects != None:
+        file_dictionary = {directory : file_dictionary[directory] for directory in file_dictionary.keys() 
+                           if directory[len(experiment_fmri_dir)+1:].split('/')[0] in subjects}
+    if sessions != None:
+        file_dictionary = {directory : file_dictionary[directory] for directory in file_dictionary.keys()
+                          if directory[len(experiment_fmri_dir)+1:].split('/')[1] in sessions}
     # list of files created by this function
     file_list = []
-    # convert between old and new hemisphere notation
+    # Dict to convert between old and new hemisphere notation
     hemi_dic = {'lh' : 'L', 'rh' : 'R'}
-    
-    # Define the names to be used for file output
-    criteria_list = ['sub','ses','task','run','space']
-    input_format = 'bids'
-    output_name_dic = {}
-    for cur_file in in_files:
-        file_name, file_suffix = get_name_suffix(cur_file)
-        # Checking for bids formatting
-        if not sum([crit in file_name for crit in criteria_list]) == len(criteria_list):
-            input_format = 'non-bids'
-        if input_format == 'bids':
-            old = re.findall('space-\w+_',file_name)[0]
-            if std141 == False:
-                new = 'space-surf.native_'
+        
+    # Iterate over subjects
+    for directory in file_dictionary.keys():
+        # pull out subject title - i.e. 'sub-0001'
+        subject = directory[len(experiment_fmri_dir)+1:].split('/')[0]
+        print('Running subject: {0}'.format(subject))
+        cur_dir = directory
+        in_files = file_dictionary[directory]
+        # Define the names to be used for file output
+        criteria_list = ['sub','ses','task','run','space']
+        input_format = 'bids'
+        output_name_dic = {}
+        for cur_file in in_files:
+            file_name, file_suffix = get_name_suffix(cur_file)
+            # Checking for bids formatting
+            if not sum([crit in file_name for crit in criteria_list]) == len(criteria_list):
+                input_format = 'non-bids'
+            if input_format == 'bids':
+                old = re.findall('space-\w+_',file_name)[0]
+                if std141 == False:
+                    new = 'space-surf.native_'
+                else:
+                    new = 'space-surf.std141_'
+                output_name_dic[file_name] = file_name.replace(old,new)
             else:
-                new = 'space-surf.std141_'
-            output_name_dic[file_name] = file_name.replace(old,new)
+                if std141 == False:
+                    new = 'space-surf.native'
+                elif std141 == True:
+                    new = 'space-surf.std141'
+                output_name_dic[file_name] = '{0}_{1}'.format(file_name, new)
+
+        # make temporary, local folder
+        tmp_dir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))   
+
+        # check if subjects' SUMA directory exists
+        suffix = fs_dir_check(fsdir,subject)
+        suma_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix)
+
+
+        if wm_mod is not 0.0 or gm_mod is not 0.0:
+            # for gm, positive values makes the distance longer, for wm negative values
+            steps = round(steps + steps * gm_mod - steps * wm_mod)
+
+        print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
+
+        if surf_vol is "standard":
+            vol_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix) 
+            vol_file = "{0}{1}_SurfVol.nii".format(subject,suffix)
         else:
-            if std141 == False:
-                new = 'space-surf.native'
-            elif std141 == True:
-                new = 'space-surf.std141'
-            output_name_dic[file_name] = '{0}_{1}'.format(file_name, new)
+            vol_dir = '/'.join(surf_vol.split('/')[0:-1])
+            vol_file = surf_vol.split('/')[-1]
+            if not vol_dir: # if volume directory is empty
+                vol_dir = cur_dir
 
-    # make temporary, local folder
-    tmp_dir = tempfile.mkdtemp("","tmp",expanduser("~/Desktop"))   
-    
-    # check if subjects' SUMA directory exists
-    suffix = fs_dir_check(fsdir,subject)
-    suma_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix)
+        # make temporary copy of volume file     
+        subprocess.call("3dcopy {0}/{1} {2}/{1}".format(vol_dir,vol_file,tmp_dir), shell=True)
 
-    
-    if wm_mod is not 0.0 or gm_mod is not 0.0:
-        # for gm, positive values makes the distance longer, for wm negative values
-        steps = round(steps + steps * gm_mod - steps * wm_mod)
-    
-    print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
-
-    if surf_vol is "standard":
-        vol_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix) 
-        vol_file = "{0}{1}_SurfVol.nii".format(subject,suffix)
-    else:
-        vol_dir = '/'.join(surf_vol.split('/')[0:-1])
-        vol_file = surf_vol.split('/')[-1]
-        if not vol_dir: # if volume directory is empty
-            vol_dir = cur_dir
-
-    # make temporary copy of volume file     
-    subprocess.call("3dcopy {0}/{1} {2}/{1}".format(vol_dir,vol_file,tmp_dir), shell=True)
-
-    # now get specfiles
-    if prefix is None:
-        prefix = "."
-    else:
-        prefix = ".{0}.".format(prefix)    
-    
-    if std141:
-        specprefix = "std.141."
-        prefix = ".std.141{0}".format(prefix)
-    else:
-        specprefix = ""    
-    # copy Suma files into the temporary directory
-    copy_suma_files(suma_dir,tmp_dir,subject,spec_prefix=specprefix)
-    
-    os.chdir(tmp_dir)
-    for cur_file in in_files:
-        file_name, file_suffix = get_name_suffix(cur_file)
-        # unzip the .nii.gz files into .nii files
-        shell_cmd("gunzip -c {0}/{1}.nii.gz > {2}/{1}.nii".format(cur_dir,file_name,tmp_dir),do_print=False)
-        if mask is None:
-            # no mask
-            maskcode = ""
+        # now get specfiles
+        if prefix is None:
+            prefix = "."
         else:
-            if mask is 'data':
-                # mask from input data
-                maskcode = "-cmask '-a {0}[0] -expr notzero(a)' ".format(file_name)
+            prefix = ".{0}.".format(prefix)    
+
+        if std141:
+            specprefix = "std.141."
+            prefix = ".std.141{0}".format(prefix)
+        else:
+            specprefix = ""    
+        # copy Suma files into the temporary directory
+        copy_suma_files(suma_dir,tmp_dir,subject,spec_prefix=specprefix)
+
+        os.chdir(tmp_dir)
+        for cur_file in in_files:
+            file_name, file_suffix = get_name_suffix(cur_file)
+            # unzip the .nii.gz files into .nii files
+            shell_cmd("gunzip -c {0}/{1}.nii.gz > {2}/{1}.nii".format(cur_dir,file_name,tmp_dir),do_print=False)
+            if mask is None:
+                # no mask
+                maskcode = ""
             else:
-                # mask from distinct dataset, copy mask to folder
-                mask_name, mask_suffix = get_name_suffix(mask)
-                subprocess.call("3dcopy {1}/{0}{2} mask+orig".format(mask_name,cur_dir,mask_suffix), shell=True)
-                maskcode = "-cmask '-a mask+orig[0] -expr notzero(a)' "
-        for hemi in ["lh","rh"]:
-            output_file_name = "{0}.{1}.func".format(output_name_dic[file_name],hemi_dic[hemi])
-            # Converts volume to surface space - output in .niml.dset
-            shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
-                    -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.nii -map_func {6} \
-                    -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
-                    -outcols_NSD_format -oob_value -0 {12}-out_niml {14}/{13}.niml.dset"
-                    .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,cur_dir,maskcode,output_file_name,tmp_dir), do_print=False)
-            # Converts the .niml.dset into a .gii file in the functional directory
-            shell_cmd("ConvertDset -o_gii_asc -input {1}/{0}.niml.dset -prefix {2}/{0}.gii".format(output_file_name,tmp_dir,cur_dir),do_print=False)
-            file_list.append('{1}/{0}'.format(output_file_name,cur_dir))            
-    os.chdir(cur_dir) 
-    if keep_temp is not True:
-        # remove temporary directory
-        shutil.rmtree(tmp_dir)
+                if mask is 'data':
+                    # mask from input data
+                    maskcode = "-cmask '-a {0}[0] -expr notzero(a)' ".format(file_name)
+                else:
+                    # mask from distinct dataset, copy mask to folder
+                    mask_name, mask_suffix = get_name_suffix(mask)
+                    subprocess.call("3dcopy {1}/{0}{2} mask+orig".format(mask_name,cur_dir,mask_suffix), shell=True)
+                    maskcode = "-cmask '-a mask+orig[0] -expr notzero(a)' "
+            for hemi in ["lh","rh"]:
+                output_file_name = "{0}.{1}.func".format(output_name_dic[file_name],hemi_dic[hemi])
+                # Converts volume to surface space - output in .niml.dset
+                shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
+                        -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.nii -map_func {6} \
+                        -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
+                        -outcols_NSD_format -oob_value -0 {12}-out_niml {14}/{13}.niml.dset"
+                        .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,cur_dir,maskcode,output_file_name,tmp_dir), do_print=False)
+                # Converts the .niml.dset into a .gii file in the functional directory
+                shell_cmd("ConvertDset -o_gii_asc -input {1}/{0}.niml.dset -prefix {2}/{0}.gii".format(output_file_name,tmp_dir,cur_dir),do_print=False)
+                file_list.append('{1}/{0}'.format(output_file_name,cur_dir))            
+        os.chdir(cur_dir) 
+        if keep_temp is not True:
+            # remove temporary directory
+            shutil.rmtree(tmp_dir)
     print('Vol2Surf run complete')
     return file_list
 
@@ -1335,7 +1411,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
     
     outnames = [x+"-L" for x in newlabel] + [x+"-R" for x in newlabel] + [x+"-BL" for x in newlabel]
     # create a list of outdata, with shared values 
-    outdata = [ roiobject(is_time_series=is_time_series,roiname=x,tr=TR,nharm=5,stimfreq=10,offset=offset) for x in outnames ]
+    outdata = [ roiobject(is_time_series=is_time_series,roiname=name,tr=TR,nharm=5,stimfreq=10,offset=offset) for name in outnames ]
 
     print("APPLYING RH ROI: " + l_roifile.split("/")[-1] + " TO DATA:")
     for x in l_files: print(x.split("/")[-1])
@@ -1397,9 +1473,6 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
             except OSError as err:
                 print("Data file: {0} could not be opened".format(run_file))
             data_n = cur_data.shape[0]
-            # testing
-            print('shape of surface data: {0}'.format(cur_data.shape))
-            print('roi shape: {0}'.format(roi_n))
             assert data_n == roi_n, "Data and ROI have different number of surface vertices"
             for roi_name in newlabel:
                 # note,  account for one-indexing of ROIs
@@ -1748,28 +1821,34 @@ def fitErrorEllipse(xyData, ellipseType='SEM', makePlot=False, returnRad=False):
         plt.show()
     return ampDiff, phaseDiff, zSNR, errorEllipse
 
-def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre_tr=0, roi='wang+benson',tasks=None, offset=None,std141=False):
+def combineHarmonics(fmriFolder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All', pre_tr=0, roi='wang+benson',session='all',tasks='All', offset=None,std141=False):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
     provided then 
     This uses the RoiSurfData function carry out FFT.
     Parameters
-    ------------
-    subjects : list
-        List of all subjects to submit
+    ------------ 
     fmriFolder : string
         Folder location, required to identify files
         to be used
     fsdir : string/os file location, default to SUBJECTS_DIR
         Freesurfer folder directory
+    subjects : string/list, Default 'All'
+        Options:
+            - 'All' - identifies and runs all subjects
+            - ['sub-0001','sub-0002'] - runs only a list of subjects
     pre_tr : int, default 0
         input for RoiSurfData - please see for more info
     roi : str, default 'wang+benson'
         other options as per RoiSurfData function
-    tasks : list, default None
-        Processing to be split by task and run 
-        separately
+    session : str, default '01'
+        The fmri session
+    tasks : list/string, default 'All'
+        Options: 
+            'All' - runs all tasks separately
+            ['task1','task2'] - runs a subset of tasks
+            None - If there is only one task
     offset : dictionary, default None
         offset to be applied to relevant tasks:
         Positive values means the first data frame was 
@@ -1791,12 +1870,20 @@ def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre
     outnames : list
         a list of strings, containing RoIs
     """
+    if subjects == 'All':
+        subjects = [files for files in os.listdir(fmriFolder) if 'sub' in files and 'html' not in files]
     task_dic={}
+    task_list=[]
+    if tasks=='All':
+        for sub in subjects:
+            task_list+=subjectFmriData(sub,fmriFolder)
+        task_list=[re.findall('task-\w+_',x)[0][5:-1] for x in task_list]
+        tasks = list(set(task_list))
     if tasks==None:
         print('No task provided. Data to be run together.')
         for sub_int, sub in enumerate(subjects):
             # produce list of files 
-            surf_files = subjectFmriData(sub, fmriFolder,std141=std141)
+            surf_files = subjectFmriData(sub, fmriFolder,std141=std141,session=session)
             # run RoiSurfData
             outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
             # Define the empty array we want to fill or concatenate together
@@ -1805,19 +1892,20 @@ def combineHarmonics(subjects, fmriFolder, fsdir=os.environ["SUBJECTS_DIR"], pre
             else:
                 outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
         task_dic['task'], outnames = outdata_arr, outnames
-        return task_dic
+        return task_dic, outnames
     else:
         for task in tasks:
             for sub_int, sub in enumerate(subjects):
                 # produce list of files 
-                surf_files = [f for f in subjectFmriData(sub, fmriFolder, std141=std141) if task in f]
-                # run RoiSurfData
-                outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset[task])
-                # Define the empty array we want to fill or concatenate together
-                if sub_int == 0:
-                    outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
-                else:
-                    outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
+                surf_files = [f for f in subjectFmriData(sub, fmriFolder, std141=std141,session=session) if task in f]
+                if len(surf_files)>0:
+                    # run RoiSurfData
+                    outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset[task])
+                    # Define the empty array we want to fill or concatenate together
+                    if sub_int == 0:
+                        outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
+                    else:
+                        outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
             task_dic[task], outnames = outdata_arr, outnames
         return task_dic, outnames
 
@@ -1843,83 +1931,92 @@ def applyFitErrorEllipse(combined_harmonics, outnames, ampPhaseZsnr_output='all'
     
     Returns
     ------------
-    ampPhaseZSNR_df : pd.DataFrame,
-        contains RoIs as index, amp difference lower/upper, 
-        phase difference lower/upper, zSNR
-    errorEllipse_dic : dictionary,
-        contains a dictionary of numpy arrays of the 
-        error ellipses broken down by RoI.
+    output_dictionary : dictionary
+        broken down by task to include:
+            ampPhaseZSNR_df : pd.DataFrame,
+                contains RoIs as index, amp difference lower/upper, 
+                phase difference lower/upper, zSNR
+            errorEllipse_dic : dictionary,
+                contains a dictionary of numpy arrays of the 
+                error ellipses broken down by RoI.
     """ 
 
-    # dictionary for output of error Ellipse
-    errorEllipse_dic={}
-    # number of rois, harmonics, subjects
-    roi_n, harmonics_n, subjects_n = combined_harmonics.shape
-    # to be used to create the final columns in the dataframe
-    harmonic_name_list = ['RoIs']
+    output_dictionary = {}
 
-    # Loop through harmonics & rois
-    for harmonic in range(harmonics_n):
-        print('Working on harmonic: {0}'.format(harmonic + 1))
-        harmonic_measures=[measure+str(harmonic+1) for measure in ['AmpDiffLower','AmpDiffHigher','PhaseDiffLower','PhaseDiffHigher','zSNR']]
-        harmonic_name_list+=harmonic_measures
-        for roi in range(roi_n):
-            errorEllipseName = '{0}_harmonic_{1}'.format(outnames[roi],harmonic)
-            xyData = combined_harmonics[roi,harmonic,:]
-            xyData = np.reshape(xyData,(len(xyData),1))
-            ampDiff, phaseDiff, zSNR, errorEllipse = fitErrorEllipse(xyData,ellipseType,makePlot,returnRad)
-            errorEllipse_dic[errorEllipseName] = errorEllipse
-            if roi==0 and harmonic ==0:
-                t=np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
-            elif harmonic == 0:
-                t=np.concatenate((t,np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
-            elif roi==0:
-                t=np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
+    for task in combined_harmonics.keys():
+        # dictionary for output of error Ellipse
+        errorEllipse_dic={}
+        # number of rois, harmonics, subjects
+        roi_n, harmonics_n, subjects_n = combined_harmonics[task].shape
+        # to be used to create the final columns in the dataframe
+        harmonic_name_list = ['RoIs']
+        
+        # Loop through harmonics & rois
+        for harmonic in range(harmonics_n):
+            print('Working on harmonic: {0}'.format(harmonic + 1))
+            harmonic_measures=[measure+str(harmonic+1) for measure in ['AmpDiffLower','AmpDiffHigher','PhaseDiffLower','PhaseDiffHigher','zSNR']]
+            harmonic_name_list+=harmonic_measures
+            for roi in range(roi_n):
+                errorEllipseName = '{0}_harmonic_{1}'.format(outnames[roi],harmonic)
+                xyData = combined_harmonics[task][roi,harmonic,:]
+                xyData = np.reshape(xyData,(xyData.size,1))
+                ampDiff, phaseDiff, zSNR, errorEllipse = fitErrorEllipse(xyData,ellipseType,makePlot,returnRad)
+                errorEllipse_dic[errorEllipseName] = errorEllipse
+                if roi==0 and harmonic ==0:
+                    t=np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
+                elif harmonic == 0:
+                    t=np.concatenate((t,np.array([[outnames[roi],ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
+                elif roi==0:
+                    t=np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])
+                else:
+                    t=np.concatenate((t,np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
+            if harmonic == 0:
+                overall=t
             else:
-                t=np.concatenate((t,np.array([[ampDiff[0],ampDiff[1],phaseDiff[0],phaseDiff[1],zSNR]])),axis=0)
-        if harmonic == 0:
-            overall=t
+                overall=np.concatenate((overall,t),axis=1)
+        
+        # construct dataframe for output
+        ampPhaseZSNR_df=pd.DataFrame(data=overall,columns=harmonic_name_list,index=outnames)
+        ampPhaseZsnr_output = str(ampPhaseZsnr_output).lower()
+        phase = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Phase' in col]]
+        amp = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Amp' in col]]
+        zSNR = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'z' in col]]
+        
+        if ampPhaseZsnr_output == 'all':
+            concat_columns = [phase, amp, zSNR]
         else:
-            overall=np.concatenate((overall,t),axis=1)
-    
-    # construct dataframe for output
-    ampPhaseZSNR_df=pd.DataFrame(data=overall,columns=harmonic_name_list,index=outnames)
-    ampPhaseZsnr_output = str(ampPhaseZsnr_output).lower()
-    phase = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Phase' in col]]
-    amp = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Amp' in col]]
-    zSNR = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'z' in col]]
-    
-    if ampPhaseZsnr_output == 'all':
-        concat_columns = [phase, amp, zSNR]
-    else:
-        concat_columns = []
-        if 'phase' in ampPhaseZsnr_output:
-            concat_columns.append(phase)
-        if 'amp' in ampPhaseZsnr_output:
-            concat_columns.append(phase)
-        if 'zsnr' in ampPhaseZsnr_output:
-            concat_columns.append(zSNR)
-    ampPhaseZSNR_df = pd.concat((concat_columns),axis=1)
-    print('DataFrame constructed')
-    return ampPhaseZSNR_df, errorEllipse_dic
-def graphRois(combined_harmonics,outnames,subjects=None,plot_by_subject=False,harmonic=1,rois=['V1','V2','V3'],hemisphere='BL',figsize=6):
+            concat_columns = []
+            if 'phase' in ampPhaseZsnr_output:
+                concat_columns.append(phase)
+            if 'amp' in ampPhaseZsnr_output:
+                concat_columns.append(phase)
+            if 'zsnr' in ampPhaseZsnr_output:
+                concat_columns.append(zSNR)
+        ampPhaseZSNR_df = pd.concat((concat_columns),axis=1)
+        print('DataFrame constructed')
+        output_dictionary[task] = [ampPhaseZSNR_df, errorEllipse_dic]
+    return output_dictionary
+def graphRois(combined_harmonics,outnames,tasks=['cont'],avg_cross_subjects = True,subjects=None,plot_by_subject=False,harmonic=1,rois=['V1','V2','V3'],hemisphere='BL',figsize=6):
     """This function will graph RoI data. 
     Parameters
     ------------
-    combined_harmonics : numpy array
-        Array of complex data. Must be in
-        below shape: RoI x Hemisphere x Subjects.
+    combined_harmonic : dictionary of tasks 
+        For each task there is an array of complex data. 
+        Must be in below shape: RoI x Hemisphere x Subjects.
         If data has been averaged across subjects
         then will be in shape: RoI x Hemisphere
     outnames : list
         This will be a list of RoI names produced
         by RoiSurfData
+    tasks : list of strings, Default ['cont']
+        List of all tasks that should be run.
+        Default is just the contrast condition
+    avg_across_subjects : Boolean, Default True
+        Will average across subjects if required
     subjects : list, default None
-        If plotting across subjects this is
-        required to iterate over and to add legend
-        to graph. If data has been averaged across
-        subjects then not required.
-    plot_by : boolean, default False
+        List of subjects. Required if you wish to plot by 
+        subject
+    plot_by_subject : boolean, default False
         How should data be plotted? Either will
         be plotted by subject or will
         be plotted by above or below inverse neg regression
@@ -1934,105 +2031,125 @@ def graphRois(combined_harmonics,outnames,subjects=None,plot_by_subject=False,ha
         Sets the figsize of graphs produced
     Returns
     ------------
-    output : numpy array
+    output : dictionary of numpy arrays
+        Broken down by task.
         Returns the numpy array of values
         with the addition of sign (+1/-1)
         for above or below the perpendicular
         of regression line through the origin
     """
-    output = []
-    
+    output = {}
+    # input checking
+    if plot_by_subject == True:
+        assert subjects != None,'Unable to plot by subject, no subject IDs given.'
     # Initial user input checking
     harmonic-=1
-    if subjects == None:
-        assert combined_harmonics.ndim == 2, 'Data shape implies subjects should be supplied.'
-    elif subjects != None:
-        assert combined_harmonics.ndim == 3, 'Data shape implies subjects should not be supplied.'
-    hemisphere = hemisphere.upper()
-    assert hemisphere in ['L','R','BL'], 'Hemisphere incorrect. See docstring for options'
-    
-    # select only specific hemisphere to look at
-    ROIs_hemisphere={x:i for i,x in enumerate(outnames) if hemisphere in x}
-    # Create linear regression model for later use
-    linear_reg=LinearRegression()
-    ROI_coefs = {}
-    # Loop through RoIs and produce scatter plot
-    for roi in rois:
-        ROI_coef = []
-        v = {k:ROIs_hemisphere[k] for k in ROIs_hemisphere.keys() if roi in k}
-        plt.figure(figsize=(figsize,figsize))
-        # If using data averaged across subjects
-        if subjects == None or len(subjects) ==1 :
-            # select the data based on desired harmonic and the RoI
-            harmonic_user_data = combined_harmonics[min(v.values()):max(v.values())+1,harmonic]
-            m, = harmonic_user_data.shape
-            user_data = harmonic_user_data
-            user_data = user_data.reshape(m,1)
-            # split complex data into real and imaginary
-            user_data = realImagSplit(user_data)
-            if plot_by_subject==True:
-                plt.scatter(user_data[:,0],user_data[:,1])
-            all_user_data = user_data
-            subjects = ['Mean Subject Data']
-        else:
-            first_iteration = True
-            # select the data across subjects based on desired harmonic and the RoI
-            harmonic_user_data = combined_harmonics[min(v.values()):max(v.values())+1,harmonic,:]
-            m, u = harmonic_user_data.shape
-            for s, subject in enumerate(subjects):
-                user_data = harmonic_user_data[:,s]
+    for task in tasks:
+        # looking at only one task
+        output[task]=[]
+        combined_harmonic = combined_harmonics[task]
+        if combined_harmonic.ndim == 3 and avg_cross_subjects == True:
+            # averaging across subjects
+            r,h,s = combined_harmonic.shape
+            real = np.real(combined_harmonic)
+            imag = np.imag(combined_harmonic)
+            real_mean = np.mean(real,axis=-1)
+            imag_mean = np.mean(imag,axis=-1)
+            real_mean = flatten_1d(real_mean)
+            imag_mean = flatten_1d(imag_mean)
+            combined_harmonic = np.concatenate((real_mean,imag_mean),axis=1)
+            combined_harmonic = combined_harmonic.view(dtype=np.complex128)
+            combined_harmonic = combined_harmonic.reshape(r,h)
+        if combined_harmonic.ndim == 3 and avg_cross_subjects == False and subjects == None:
+            r,h,s = combined_harmonic.shape
+            subjects = [sub_n for sub_n in range(s)]
+        hemisphere = hemisphere.upper()
+        assert hemisphere in ['L','R','BL'], 'Hemisphere incorrect. See docstring for options'
+
+        # select only specific hemisphere to look at
+        ROIs_hemisphere={x:i for i,x in enumerate(outnames) if hemisphere in x}
+        # Create linear regression model for later use
+        linear_reg=LinearRegression()
+        ROI_coefs = {}
+        # Loop through RoIs and produce scatter plot
+        for roi in rois:
+            ROI_coef = []
+            v = {k:ROIs_hemisphere[k] for k in ROIs_hemisphere.keys() if roi in k}
+            plt.figure(figsize=(figsize,figsize))
+            # If using data averaged across subjects
+            if subjects == None or len(subjects) ==1 :
+                # select the data based on desired harmonic and the RoI
+                harmonic_user_data = combined_harmonic[min(v.values()):max(v.values())+1,harmonic]
+                m, = harmonic_user_data.shape
+                user_data = harmonic_user_data
                 user_data = user_data.reshape(m,1)
+                # split complex data into real and imaginary
                 user_data = realImagSplit(user_data)
-                if first_iteration == True:
-                    all_user_data = user_data
-                    first_iteration = False
-                else:
-                    all_user_data = np.concatenate((all_user_data,user_data),axis=0)
                 if plot_by_subject==True:
-                    # plot individual subjects
                     plt.scatter(user_data[:,0],user_data[:,1])
-        # Create graph
-        plt.title(roi)
-        plt.axis('equal')
-        plt.xlabel('Real')
-        plt.ylabel('Imaginary')
-        
-        # Add line for axes
-        plt.axhline(color = 'k', linewidth = 1)
-        plt.axvline(color = 'k', linewidth = 1)
-        # Create legend
-        if plot_by_subject == True:
-            additional_legend = subjects
-            plt.legend(['linear fit','perpendicular fit']+additional_legend,loc=4)
-        else:
-            additional_legend = ['Positive','Negative']
-        
-        m,n = all_user_data.shape
-        # fit a linear regression
-        X=all_user_data[:,0].reshape(m,1)
-        y=all_user_data[:,1].reshape(m,1)
-        linear_reg.fit(X,y)
-        ROI_coef.append(linear_reg.coef_.flatten()[0])
-        # set the intercept to the origin
-        linear_reg.intercept_=0
-        m=max(np.absolute(np.min(X)),np.absolute(np.max(X)))
-        # plot regression line & perpendicular of regression
-        X=np.linspace(-m,+m)
-        X=X.reshape(X.shape[0],1)
-        plt.plot(X,linear_reg.predict(X),'k',label='linear fit')
-        linear_reg.coef_ = 1/(-linear_reg.coef_)
-        ROI_coef.append(linear_reg.coef_.flatten()[0])
-        ROI_coefs[roi] = ROI_coef
-        plt.plot(X,linear_reg.predict(X),'k',label='perpendicular fit')
-        # give the figures a symbol +1/-1
-        roi_output = np.concatenate((all_user_data,np.zeros((all_user_data.shape[0],1))),axis=1)
-        roi_output[roi_output[:,1]<roi_output[:,0]*linear_reg.coef_.flatten(),2]=-1
-        roi_output[roi_output[:,1]>roi_output[:,0]*linear_reg.coef_.flatten(),2]=+1
-        output.append(roi_output)
-        if plot_by_subject == False:
-            plt.scatter(roi_output[roi_output[:,2]==1,0],roi_output[roi_output[:,2]==1,1],label='Positive')
-            plt.scatter(roi_output[roi_output[:,2]==-1,0],roi_output[roi_output[:,2]==-1,1],label='Negative')
-            plt.legend(loc=4)
-        plt.show()
+                all_user_data = user_data
+                subjects = ['Mean Subject Data']
+            else:
+                first_iteration = True
+                # select the data across subjects based on desired harmonic and the RoI
+                harmonic_user_data = combined_harmonic[min(v.values()):max(v.values())+1,harmonic,:]
+                m, u = harmonic_user_data.shape
+                for s, subject in enumerate(subjects):
+                    user_data = harmonic_user_data[:,s]
+                    user_data = user_data.reshape(m,1)
+                    user_data = realImagSplit(user_data)
+                    if first_iteration == True:
+                        all_user_data = user_data
+                        first_iteration = False
+                    else:
+                        all_user_data = np.concatenate((all_user_data,user_data),axis=0)
+                    if plot_by_subject==True:
+                        # plot individual subjects
+                        plt.scatter(user_data[:,0],user_data[:,1])
+            # Create graph
+            plt.title(roi)
+            plt.axis('equal')
+            plt.xlabel('Real')
+            plt.ylabel('Imaginary')
+
+            # Add line for axes
+            plt.axhline(color = 'k', linewidth = 1)
+            plt.axvline(color = 'k', linewidth = 1)
+            # Create legend
+            if plot_by_subject == True:
+                additional_legend = subjects
+                plt.legend(['linear fit','perpendicular fit']+additional_legend,loc=4)
+            else:
+                additional_legend = ['Positive','Negative']
+
+            m,n = all_user_data.shape
+            # fit a linear regression
+            X=all_user_data[:,0].reshape(m,1)
+            y=all_user_data[:,1].reshape(m,1)
+            linear_reg.fit(X,y)
+            ROI_coef.append(linear_reg.coef_.flatten()[0])
+            # set the intercept to the origin
+            linear_reg.intercept_=0
+            m=max(np.absolute(np.min(X)),np.absolute(np.max(X)))
+            # plot regression line & perpendicular of regression
+            X=np.linspace(-m,+m)
+            X=X.reshape(X.shape[0],1)
+            plt.plot(X,linear_reg.predict(X),'k',label='linear fit')
+            linear_reg.coef_ = 1/(-linear_reg.coef_)
+            ROI_coef.append(linear_reg.coef_.flatten()[0])
+            ROI_coefs[roi] = ROI_coef
+            plt.plot(X,linear_reg.predict(X),'k',label='perpendicular fit')
+            # give the figures a symbol +1/-1
+            roi_output = np.concatenate((all_user_data,np.zeros((all_user_data.shape[0],1))),axis=1)
+            roi_output[roi_output[:,1]<roi_output[:,0]*linear_reg.coef_.flatten(),2]=-1
+            roi_output[roi_output[:,1]>roi_output[:,0]*linear_reg.coef_.flatten(),2]=+1
+            output[task].append(roi_output)
+            if plot_by_subject == False:
+                plt.scatter(roi_output[roi_output[:,2]==1,0],roi_output[roi_output[:,2]==1,1],label='Positive')
+                plt.scatter(roi_output[roi_output[:,2]==-1,0],roi_output[roi_output[:,2]==-1,1],label='Negative')
+                plt.legend(loc=4)
+            plt.show()
     # returns RoIs - coefficients & negative inverse of coeff
+    for key in output.keys():
+        output[key] = np.array(output[key])
     return output
