@@ -161,13 +161,13 @@ def subjectFmriData(sub, fmriFolder,std141=False,session='all'):
             file_list = [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
     return file_list
 
-def create_file_dictionary(experiment_fmri_dir):
+def create_file_dictionary(experiment_dir):
     # creates file dictionary necessary for Vol2Surf
-    subjects = [folder for folder in os.listdir(experiment_fmri_dir) if 'sub' in folder and '.html' not in folder]
-    subject_session_dic = {subject: [session for session in os.listdir("{0}/{1}".format(experiment_fmri_dir,subject)) if 'ses' in session] for subject in subjects}
+    subjects = [folder for folder in os.listdir(experiment_dir) if 'sub' in folder and '.html' not in folder]
+    subject_session_dic = {subject: [session for session in os.listdir("{0}/{1}".format(experiment_dir,subject)) if 'ses' in session] for subject in subjects}
     subject_session_directory = []
     for subject in subjects:
-        subject_session_directory += ["{0}/{1}/{2}/func".format(experiment_fmri_dir,subject,session) for session in subject_session_dic[subject]]
+        subject_session_directory += ["{0}/{1}/{2}/func".format(experiment_dir,subject,session) for session in subject_session_dic[subject]]
     files_dic = {directory : [files for files in os.listdir(directory) if 'preproc.nii.gz' in files] for directory in subject_session_directory}
     return files_dic
 def make_hard_links(bidsdir,experiment,subjects,fsdir):
@@ -470,7 +470,7 @@ def Scale(in_files, no_dt=False, keep_temp=False):
         # remove temporary directory
         shutil.rmtree(tmpdir)
 
-def Vol2Surf(experiment_fmri_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, sessions=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard', std141=False, keep_temp=False):
+def Vol2Surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, sessions=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard', std141=False, keep_temp=False):
     """
     Function for converting from volume to surface space.  
     Supports suma surfaces both in native and std141 space.
@@ -487,7 +487,7 @@ def Vol2Surf(experiment_fmri_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=Non
     
     Parameters
     ------------
-    experiment_fmri_dir : string
+    experiment_dir : string
         The directory for the fmri data for the experiment
         Example: '/Volumes/Computer/Users/Username/Experiment/fmriprep'
     fsdir : string, default os.environ["SUBJECTS_DIR"]
@@ -534,14 +534,14 @@ def Vol2Surf(experiment_fmri_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=Non
         This is a list of all files created by the function
     """
     # Create a dictionary of files - keys are the directory for each session
-    file_dictionary = create_file_dictionary(experiment_fmri_dir)
+    file_dictionary = create_file_dictionary(experiment_dir)
     # Remove unwanted subjects and sessions
     if subjects != None:
         file_dictionary = {directory : file_dictionary[directory] for directory in file_dictionary.keys() 
-                           if directory[len(experiment_fmri_dir)+1:].split('/')[0] in subjects}
+                           if directory[len(experiment_dir)+1:].split('/')[0] in subjects}
     if sessions != None:
         file_dictionary = {directory : file_dictionary[directory] for directory in file_dictionary.keys()
-                          if directory[len(experiment_fmri_dir)+1:].split('/')[1] in sessions}
+                          if directory[len(experiment_dir)+1:].split('/')[1] in sessions}
     # list of files created by this function
     file_list = []
     # Dict to convert between old and new hemisphere notation
@@ -550,8 +550,11 @@ def Vol2Surf(experiment_fmri_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=Non
     # Iterate over subjects
     for directory in file_dictionary.keys():
         # pull out subject title - i.e. 'sub-0001'
-        subject = directory[len(experiment_fmri_dir)+1:].split('/')[0]
-        print('Running subject: {0}'.format(subject))
+        subject = directory[len(experiment_dir)+1:].split('/')[0]
+        if std141:
+            print("Running subject {0}, std141 template:".format(subject))
+        else:
+            print("Running subject {0}, native:".format(subject))
         cur_dir = directory
         in_files = file_dictionary[directory]
         # Define the names to be used for file output
@@ -589,7 +592,7 @@ def Vol2Surf(experiment_fmri_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=Non
             # for gm, positive values makes the distance longer, for wm negative values
             steps = round(steps + steps * gm_mod - steps * wm_mod)
 
-        print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
+        print("... MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
 
         if surf_vol is "standard":
             vol_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix) 
@@ -649,7 +652,7 @@ def Vol2Surf(experiment_fmri_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=Non
         if keep_temp is not True:
             # remove temporary directory
             shutil.rmtree(tmp_dir)
-    print('Vol2Surf run complete')
+    print('... Vol2Surf run complete')
     return file_list
 
 def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, out_dir=None, fs_dir=None, surf_vol='standard', std141=False, keep_temp=False):
