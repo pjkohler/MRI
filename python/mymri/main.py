@@ -807,7 +807,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
     run_benson, run_glasser, run_wang, run_kgs = False, False, False, False
     run_possible_arguments=['benson','glasser','wang','kgs']
     roi_type = str(roi_type).lower()
-    confirmation_str = 'Running: '
+    confirmation_str = ''
     if 'all' in roi_type:
         run_benson, run_glasser, run_wang, run_kgs = True, True, True, True
         confirmation_str += 'Benson, Glasser, Wang, KGS'
@@ -827,9 +827,8 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
     else:
         print('Error - no correct option selected. Please input: benson, glasser, wang or KGS')
         return None
-    print(confirmation_str)
-
     for sub in subjects: # loop over list of subjects
+        print("Running {0}: {1}".format(sub, confirmation_str))
         # check if subjects' freesurfer directory exists
         if os.path.isdir("{0}/{1}".format(fsdir,sub)):
             # no suffix needed
@@ -916,6 +915,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
             outname = 'Benson2014'
 
             if os.path.isdir(surfdir+"/xhemi") is False or forcex is True:
+                print("... Benson: doing fsaverage_sym registration")
                 #Invert the right hemisphere - currently removed as believed not needed
                 #shell_cmd("xhemireg --s {0}{1}".format(sub,suffix), fsdir,do_print=True)
                 # register lh to fsaverage sym
@@ -924,7 +924,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
                 # though the right hemisphere is not explicitly listed below, it is implied by --lh --xhemi
                 shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir,do_print=True)
             else:
-                print("Skipping fsaverage_sym registration")
+                print("... Benson: skipping fsaverage_sym registration")
 
             if separate_out:
                 datalist = ["angle", "eccen", "areas", "all"]
@@ -982,12 +982,12 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
                     mapfile = ""
                 if os.path.isfile(mapfile) and not force_new_mapping:
 
-                    print("Using existing mapping file {0}".format(mapfile))
+                    print("... Wang: {0}, using existing mapping file from subject's SUMA directory".format(hemi))
                     subprocess.call("SurfToSurf -i_{4} ./SUMA/{0}.smoothwm.{3} -i_{4} ./SUMA/std.141.{0}.smoothwm.{3} -output_params {1} -mapfile {2} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
                         .format(hemi,intertype,mapfile,file_format,surf_to_surf_i), shell=True)
                     newmap = False
                 else:
-                    print("Generating new mapping file")
+                    print("... Wang: {0}, generating new mapping file".format(hemi))
                     newmap = True
                     subprocess.call("SurfToSurf -i_{3} ./SUMA/{0}.smoothwm.{2} -i_{3} ./SUMA/std.141.{0}.smoothwm.{2} -output_params {1} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
                         .format(hemi,intertype,file_format,surf_to_surf_i), shell=True)       
@@ -1010,7 +1010,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
                     .format(hemi, outname), shell=True)
 
                 if not skipclust: # do optional surface-based clustering
-                    print('######################## CLUSTERING ########################')
+                    print("... Wang: {0}, doing clustering".format(hemi))
                     for idx in range(1,26):
                         # clustering steps
                         specfile="./SUMA/{0}{1}_{2}.spec".format(sub,suffix,hemi)  
@@ -1050,7 +1050,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
                     shutil.move("./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi),
                                 "{3}/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub,suffix,hemi,sumadir))
                 #convert data set to asc
-                shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{1}.{0}.niml.dset -prefix ./TEMPLATE_ROIS/{1}.{0}.temp.niml.dset".format(outname,hemi),do_print=True)
+                shell_cmd("ConvertDset -o_niml_asc -input ./TEMPLATE_ROIS/{1}.{0}.niml.dset -prefix ./TEMPLATE_ROIS/{1}.{0}.temp.niml.dset".format(outname,hemi))
                 os.remove("./TEMPLATE_ROIS/{1}.{0}.niml.dset".format(outname,hemi))
                 os.rename("./TEMPLATE_ROIS/{1}.{0}.temp.niml.dset".format(outname,hemi),"./TEMPLATE_ROIS/{1}.{0}.niml.dset".format(outname,hemi))
                 if not skipclust:
@@ -1072,8 +1072,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
 
                     if not os.path.isfile("{1}/{3}/{0}.MPM_{2}.label".format(hemi,atlasdir,roi,outname)):
                         # if label file does not exist, skip it
-                        print("file doesn't exist")
-                        print("{1}/{3}/{0}.MPM_{2}.label".format(hemi,atlasdir,roi,outname))
+                        print("... KGS: file {0}.MPM_{1}.label doesn't exist".format(hemi,roi))
                         continue
                     # Make the intermediate (subject-native) surface:
                     #   --srcsubject is always fsaverage since we assume the input file is an fsaverage file
@@ -1125,7 +1124,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
         os.chdir(curdir)
 
         if os.path.isdir(outdir):
-            print("Output directory {0} exists, adding '_new'".format(outdir))
+            print("... ROI output directory ""TEMPLATE_ROIS"" exists, adding '_new'")
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}_new".format(outdir)) 
         else:
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}".format(outdir)) 
