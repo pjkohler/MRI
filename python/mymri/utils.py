@@ -1,15 +1,11 @@
+import os, subprocess, sys, glob, shutil, tempfile, re, stat
 import argparse
-import glob
 import json
 import nibabel as nib
 import nipype.interfaces.fsl as fsl
 import numpy as np
-import os
-import re
-import shutil
-import subprocess
-import sys
 import tarfile
+
 
 # *****************************
 # *** HELPER FUNCTIONS
@@ -775,3 +771,50 @@ def BidsLinks(anat_session,exp_session,remove_only=False):
 					if remove_only:
 					# don't jump back into file creation loop
 						generating_files = False
+
+def CreateHardLinks(bidsdir,experiment,subjects,fsdir="main"):
+	"""Function creates hardlinks from freesurfer directory to the experiment folder
+
+	Parameters
+	------------
+	bidsdir : string
+		The directory for BIDS Analysis. Should contain the freesurfer folder and experiment folder.
+	experiment : string
+		Used for location of the experiment folder within the BIDS directory
+	subjects : list of strings
+		This is a list of the subjects that require hardlinks to be made
+	fsdir : string
+		The freesurfer directory
+	Returns
+	------------
+	checking_dic : dictionary
+		Contains the source and destination of the files. Used for checking that the new directory 
+		is actually a hard link of the old one.
+	"""
+	checking_dic = {}
+	if fsdir.lower() in "main":
+		fsdir = "{0}/freesurfer".format(bidsdir)
+	if os.path.isdir(fsdir):
+		for sub in subjects:
+			src = "{0}/{1}".format(fsdir,sub)
+			dst = "{0}/{1}/freesurfer/{2}".format(bidsdir,experiment,sub)
+			os.link(src,dst)
+			checking_dic[sub] = [src,dst]
+		CheckHardLinks(checking_dic)
+		return checking_dic
+	else:
+		print("Freesurfer directory {0} does not exist".format(fsdir))
+def CheckHardLinks(checking_dic):
+	correct_int = 0
+	error_log = []
+	for key in checking_dic.keys():
+		l1 = checking_dic[key][0]
+		l2 = checking_dic[key][1]
+		if (l1[stat.ST_INO],l1[stat.ST_DEV]) == (l2[stat.ST_INO], l2[stat.ST_DEV]):
+			correct_int+=1
+		else:
+			error_log.append(l2)
+	if correct_int == len(checking_dic):
+		print('All new files are hardlinks')
+	else:
+		print('Files not hard link: \n {0}'.format(error_log))   

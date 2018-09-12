@@ -170,51 +170,8 @@ def create_file_dictionary(experiment_dir):
         subject_session_directory += ["{0}/{1}/{2}/func".format(experiment_dir,subject,session) for session in subject_session_dic[subject]]
     files_dic = {directory : [files for files in os.listdir(directory) if 'preproc.nii.gz' in files] for directory in subject_session_directory}
     return files_dic
-def make_hard_links(bidsdir,experiment,subjects,fsdir):
-    """Function creates hardlinks from freesurfer directory to the experiment folder
-
-    Parameters
-    ------------
-    bidsdir : string
-        The directory for BIDS Analysis. Should contain the freesurfer folder and experiment folder.
-    experiment : string
-        Used for location of the experiment folder within the BIDS directory
-    subjects : list of strings
-        This is a list of the subjects that require hardlinks to be made
-    fsdir : string
-        The freesurfer directory
-    Returns
-    ------------
-    checking_dic : dictionary
-        Contains the source and destination of the files. Used for checking that the new directory 
-        is actually a hard link of the old one.
-    """
-    checking_dic = {}
-    for sub in subjects:
-        src = "{0}/{1}".format(fsdir,sub)
-        dst = "{0}/{1}/freesurfer/{2}".format(bidsdir,experiment,sub)
-        os.link(src,dst)
-        checking_dic[sub] = [src,dst]
-    check_hard_links(checking_dic)
-    return checking_dic
-def check_hard_links(checking_dic):
-    correct_int = 0
-    error_log = []
-    for key in checking_dic.keys():
-        l1 = checking_dic[key][0]
-        l2 = checking_dic[key][1]
-        if (l1[stat.ST_INO],l1[stat.ST_DEV]) == (l2[stat.ST_INO], l2[stat.ST_DEV]):
-            correct_int+=1
-        else:
-            error_log.append(l2)
-    if correct_int == len(checking_dic):
-        print('All new files are hardlinks')
-    else:
-        print('Files not hard link: \n {0}'.format(error_log))   
-    
 
 ## CLASSES
-
 class roiobject:
     def __init__(self, curdata=np.zeros((120, 1)), curobject=None, is_time_series=True, roiname="unknown", tr=99, stimfreq=99, nharm=99, num_vox=0, offset=0):
         if curobject is None:

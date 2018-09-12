@@ -1,9 +1,8 @@
 try:
-	from main import Suma, Neuro2Radio, Pre, Volreg, Scale, Vol2Surf, Surf2Vol, RoiTemplates, RoiSurfData, MriSurfSmooth, MriFFT, HotT2Test, fitErrorEllipse, combineHarmonics, applyFitErrorEllipse, realImagSplit, graphRois, make_hard_links
-	from utils import BidsOrganizer, BidsLinks
+	from main import Suma, Neuro2Radio, Pre, Volreg, Scale, Vol2Surf, Surf2Vol, RoiTemplates, RoiSurfData, MriSurfSmooth, MriFFT, HotT2Test, fitErrorEllipse, combineHarmonics, applyFitErrorEllipse, realImagSplit, graphRois
+	from utils import BidsOrganizer, CreateHardLinks
 except ImportError:
-	from .main import Suma, Neuro2Radio, Pre, Volreg, Scale, Vol2Surf, Surf2Vol, RoiTemplates, RoiSurfData, MriSurfSmooth, MriFFT, HotT2Test, fitErrorEllipse, combineHarmonics, applyFitErrorEllipse, realImagSplit, graphRois, make_hard_links
-	from .utils import BidsOrganizer, BidsLinks
-
+	from .main import Suma, Neuro2Radio, Pre, Volreg, Scale, Vol2Surf, Surf2Vol, RoiTemplates, RoiSurfData, MriSurfSmooth, MriFFT, HotT2Test, fitErrorEllipse, combineHarmonics, applyFitErrorEllipse, realImagSplit, graphRois
+	from .utils import BidsOrganizer, CreateHardLinks
 
 
