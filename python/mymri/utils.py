@@ -1,4 +1,5 @@
 import os, subprocess, sys, glob, shutil, tempfile, re, stat
+from os.path import join, abspath
 import argparse
 import json
 import nibabel as nib
@@ -794,7 +795,7 @@ def HardCreate(bidsdir,experiment,subjects="all",fsdir="main"):
     checking_dic = {}
     if fsdir.lower() in "main":
         fsdir = "{0}/freesurfer".format(bidsdir)
-        if subjects in "all":
+        if "all" in subjects:
             subjects = [x for x in os.path.os.listdir(fs_dir) if "sub-" in x[0:4]]
         for sub in subjects:
             src = "{0}/{1}".format(fsdir,sub)

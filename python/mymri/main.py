@@ -18,7 +18,7 @@ def fs_dir_check(fs_dir,subject):
         # no suffix needed
         suffix=""
     else:
-        # suffix needed
+        # suffix needed f
         suffix="_fs4"
         if not os.path.isdir("{0}/{1}{2}".format(fs_dir,subject,suffix)):
             sys.exit("ERROR!\nSubject folder {0}/{1} \ndoes not exist, without or with suffix '{2}'."
@@ -142,23 +142,18 @@ def eigFourierCoefs(xyData):
            smaller_eigenval,larger_eigenvec, 
            larger_eigenval, phi)
 
-def subjectFmriData(sub, fmriFolder,std141=False,session='all'):
+def GetBidsData(targetfolder,std141=False,session='01'):
+    file_list = []
     if session=='all':
-        session_folders = [subject_session for subject_session in os.listdir('{0}/{1}'.format(fmriFolder,sub)) if 'ses' in subject_session]
-        file_list = []
-        for subject_session in session_folders:
-            fmridir = '{0}/{1}/{2}/func/'.format(fmriFolder,sub,subject_session)
-            if std141 == True:
-                file_list += [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
-            else:
-                file_list += [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
+        session_folders = [subject_session for subject_session in os.listdir(target_folder) if 'ses' in subject_session]
     else:
-        fmridir= '{0}/{1}/ses-{2}/func/'.format(fmriFolder,sub,session)
-        # returns files needed to run RoiSurfData
-        if std141==True:
-            file_list = [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
+        session_folders = ["{0}/ses-{1}".format(targetfolder,str(session).zfill(2))]
+    for cur_ses in session_folders:
+        cur_dir = '{0}/func/'.format(cur_ses)
+        if std141 == True:
+            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'surf' in x and 'std141' in x]
         else:
-            file_list = [fmridir+x for x in os.path.os.listdir(fmridir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
+            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'surf' in x and 'std141' not in x]
     return file_list
 
 def create_file_dictionary(experiment_dir):
@@ -215,6 +210,8 @@ class fftobject:
         for key in [ "spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", 
                     "sig_amp", "sig_phase", "sig_complex", "noise_complex", "noise_amp", "noise_phase" ]:
             setattr(self, key, [])
+
+
 ## MAIN FUNCTIONS
 
 def Suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=False, fs_dir=None): 
@@ -831,7 +828,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
 
         # Does SUMA folder exist - if not run @SUMA_Make_Spec_FS -NIFTI -sid subject1
         if not os.path.isdir(sumadir):
-            print('Running @SUMA_Make_Spec_FS')
+            print('... running @SUMA_Make_Spec_FS')
             os.chdir("{0}/{1}{2}".format(fsdir,sub,suffix))
             shell_cmd("@SUMA_Make_Spec_FS -NIFTI -sid {0}{1}".format(sub,suffix))
             file_format="gii"
@@ -879,10 +876,10 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
                 #Invert the right hemisphere - currently removed as believed not needed
                 #shell_cmd("xhemireg --s {0}{1}".format(sub,suffix), fsdir,do_print=True)
                 # register lh to fsaverage sym
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix), fsdir,do_print=True)
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix), fsdir)
                 # mirror-reverse subject rh and register to lh fsaverage_sym
                 # though the right hemisphere is not explicitly listed below, it is implied by --lh --xhemi
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir,do_print=True)
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir)
             else:
                 print("... Benson: skipping fsaverage_sym registration")
 
@@ -1835,14 +1832,14 @@ def combineHarmonics(fmriFolder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All'
     task_list=[]
     if tasks=='All':
         for sub in subjects:
-            task_list+=subjectFmriData(sub,fmriFolder)
+            task_list+=GetBidsData(sub,fmriFolder)
         task_list=[re.findall('task-\w+_',x)[0][5:-1] for x in task_list]
         tasks = list(set(task_list))
     if tasks==None:
         print('No task provided. Data to be run together.')
         for sub_int, sub in enumerate(subjects):
             # produce list of files 
-            surf_files = subjectFmriData(sub, fmriFolder,std141=std141,session=session)
+            surf_files = GetBidsData(sub, fmriFolder,std141=std141,session=session)
             # run RoiSurfData
             outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
             # Define the empty array we want to fill or concatenate together
@@ -1856,7 +1853,7 @@ def combineHarmonics(fmriFolder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All'
         for task in tasks:
             for sub_int, sub in enumerate(subjects):
                 # produce list of files 
-                surf_files = [f for f in subjectFmriData(sub, fmriFolder, std141=std141,session=session) if task in f]
+                surf_files = [f for f in GetBidsData(sub, fmriFolder, std141=std141,session=session) if task in f]
                 if len(surf_files)>0:
                     # run RoiSurfData
                     outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset[task])
