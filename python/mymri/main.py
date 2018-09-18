@@ -1,4 +1,4 @@
-import os, subprocess, sys, glob, shutil, tempfile, re, stat
+import os, subprocess, sys, glob, shutil, tempfile, re, stat, time, textwrap
 from os.path import expanduser
 from nilearn import datasets, surface
 import numpy as np
@@ -12,6 +12,13 @@ from itertools import combinations
 from sklearn.linear_model import LinearRegression
 
 ## HELPER FUNCTIONS
+def print_wrap(msg,indent=0):
+    if int(indent) > 0:
+        wrapper = textwrap.TextWrapper(initial_indent=" "*4*indent,subsequent_indent=" "*4*(indent+1))
+        print(wrapper.fill(msg))
+    else:
+        print(msg)
+
 def fs_dir_check(fs_dir,subject):
     # check if subjects' SUMA directory exists
     if os.path.isdir("{0}/{1}/SUMA".format(fs_dir,subject)):
@@ -76,7 +83,7 @@ def shell_cmd(main_cmd, fsdir=None, do_print=False):
     if fsdir is not None:
         main_cmd = "export SUBJECTS_DIR={0}; {1}".format(fsdir, main_cmd)
     if do_print:
-        print(main_cmd+'\n')
+        print(main_cmd+"\n")
     subprocess.call("{0}".format(main_cmd), shell=True)
 
 def fft_offset(complex_in, offset_rad):
@@ -117,7 +124,7 @@ def eigFourierCoefs(xyData):
         xyData = realImagSplit(xyData)
         m, n = xyData.shape
         if n != 2:
-            print('Data in incorrect shape - please correct')
+            print_wrap('Data in incorrect shape - please correct')
             return None
     realData = xyData[:,0]
     imagData = xyData[:,1]
@@ -142,12 +149,12 @@ def eigFourierCoefs(xyData):
            smaller_eigenval,larger_eigenvec, 
            larger_eigenval, phi)
 
-def GetBidsData(targetfolder,std141=False,session='01'):
+def GetBidsData(target_folder,std141=False,session='01'):
     file_list = []
     if session=='all':
-        session_folders = [subject_session for subject_session in os.listdir(target_folder) if 'ses' in subject_session]
+        session_folders = ["{0}/{1}".format(target_folder,s) for s in os.listdir(target_folder) if 'ses' in s]
     else:
-        session_folders = ["{0}/ses-{1}".format(targetfolder,str(session).zfill(2))]
+        session_folders = ["{0}/ses-{1}".format(target_folder,str(session).zfill(2))]
     for cur_ses in session_folders:
         cur_dir = '{0}/func/'.format(cur_ses)
         if std141 == True:
@@ -256,7 +263,7 @@ def Neuro2Radio(in_files):
     for scan in in_files:
         name, suffix = get_name_suffix(scan)
         old_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True, universal_newlines=True)
-        print("Old orientation: {0}".format(old_orient))
+        print_wrap("old orientation: {0}".format(old_orient))
         temp_scan = name+"_temp"+suffix
         shutil.copyfile(scan,temp_scan)
         try:
@@ -266,10 +273,10 @@ def Neuro2Radio(in_files):
         except:
             # replace with original
             shutil.copyfile(temp_scan, scan)
-            print("Orientation could not be changed for file {0}".format(scan))
+            print_wrap("orientation could not be changed for file {0}".format(scan))
         os.remove(temp_scan)
         new_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True, universal_newlines=True)
-        print("New orientation: {0}".format(new_orient))
+        print_wrap("new orientation: {0}".format(new_orient))
 
 def Pre(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_file=None, pad_ap=0, pad_is=0, diff_mat=False, keep_temp=False):
     """
@@ -506,9 +513,9 @@ def Vol2Surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, se
         # pull out subject title - i.e. 'sub-0001'
         subject = directory[len(experiment_dir)+1:].split('/')[0]
         if std141:
-            print("Running subject {0}, std141 template:".format(subject))
+            print_wrap("Running subject {0}, std141 template:".format(subject))
         else:
-            print("Running subject {0}, native:".format(subject))
+            print_wrap("Running subject {0}, native:".format(subject))
         cur_dir = directory
         in_files = file_dictionary[directory]
         # Define the names to be used for file output
@@ -545,9 +552,8 @@ def Vol2Surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, se
         if wm_mod is not 0.0 or gm_mod is not 0.0:
             # for gm, positive values makes the distance longer, for wm negative values
             steps = round(steps + steps * gm_mod - steps * wm_mod)
-
-        print("... MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
-
+        
+        print_wrap("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps),indent=1)
         if surf_vol is "standard":
             vol_dir = "{0}/{1}{2}/SUMA".format(fsdir,subject,suffix) 
             vol_file = "{0}{1}_SurfVol.nii".format(subject,suffix)
@@ -597,16 +603,19 @@ def Vol2Surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, se
                 shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
                         -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.nii -map_func {6} \
                         -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
-                        -outcols_NSD_format -oob_value -0 {12}-out_niml {14}/{13}.niml.dset"
-                        .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,cur_dir,maskcode,output_file_name,tmp_dir), do_print=False)
+                        -outcols_NSD_format -oob_value -0 {11}-out_niml {13}/{12}.niml.dset"
+                        .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,maskcode,output_file_name,tmp_dir), do_print=False)
+                # Removes output gii file if it exists
+                if os.path.isfile("{1}/{0}.gii".format(output_file_name,cur_dir)):
+                    os.remove("{1}/{0}.gii".format(output_file_name,cur_dir))
                 # Converts the .niml.dset into a .gii file in the functional directory
-                shell_cmd("ConvertDset -o_gii_asc -input {1}/{0}.niml.dset -prefix {2}/{0}.gii".format(output_file_name,tmp_dir,cur_dir),do_print=False)
+                shell_cmd("ConvertDset -o_gii_b64 -input {1}/{0}.niml.dset -prefix {2}/{0}.gii".format(output_file_name,tmp_dir,cur_dir),do_print=False)
                 file_list.append('{1}/{0}'.format(output_file_name,cur_dir))            
         os.chdir(cur_dir) 
         if keep_temp is not True:
             # remove temporary directory
             shutil.rmtree(tmp_dir)
-    print('... Vol2Surf run complete')
+    print_wrap('Vol2Surf run complete')
     return file_list
 
 def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, out_dir=None, fs_dir=None, surf_vol='standard', std141=False, keep_temp=False):
@@ -638,7 +647,7 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
         # for gm, positive values makes the distance longer, for wm negative values
         steps = round(steps + steps * gm_mod - steps * wm_mod)
     
-    print("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
+    print_wrap("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod,gm_mod,steps))
 
     if surf_vol is "standard":
         vol_dir = "{0}/{1}{2}/SUMA".format(fs_dir,subject,suffix) 
@@ -782,10 +791,10 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
             run_kgs = True
             confirmation_str += 'KGS'
     else:
-        print('Error - no correct option selected. Please input: benson, glasser, wang or KGS')
+        print_wrap('Error - no correct option selected. Please input: benson, glasser, wang or KGS')
         return None
     for sub in subjects: # loop over list of subjects
-        print("Running {0}: {1}".format(sub, confirmation_str))
+        print_wrap("Running {0}: {1}".format(sub, confirmation_str))
         # check if subjects' freesurfer directory exists
         if os.path.isdir("{0}/{1}".format(fsdir,sub)):
             # no suffix needed
@@ -828,7 +837,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
 
         # Does SUMA folder exist - if not run @SUMA_Make_Spec_FS -NIFTI -sid subject1
         if not os.path.isdir(sumadir):
-            print('... running @SUMA_Make_Spec_FS')
+            print_wrap('running @SUMA_Make_Spec_FS',indent=1)
             os.chdir("{0}/{1}{2}".format(fsdir,sub,suffix))
             shell_cmd("@SUMA_Make_Spec_FS -NIFTI -sid {0}{1}".format(sub,suffix))
             file_format="gii"
@@ -839,7 +848,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
             elif len(glob.glob("{0}/{1}{2}/SUMA/*.gii".format(fsdir,sub,suffix))) > 0:
                 file_format='gii'
             else:
-                print('SUMA Error - no .asc or .gii files located')
+                print_wrap('SUMA Error - no .asc or .gii files located')
                 return None
         for file in glob.glob(sumadir+"/*h.smoothwm.{0}".format(file_format)):
             shutil.copy(file,tmpdir+"/SUMA")
@@ -870,18 +879,18 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
         if run_benson == True:
 
             outname = 'Benson2014'
-
+            print_wrap("running Benson2014:",indent=1)
             if os.path.isdir(surfdir+"/xhemi") is False or forcex is True:
-                print("... Benson: doing fsaverage_sym registration")
+                print_wrap("doing fsaverage_sym registration",indent=2)
                 #Invert the right hemisphere - currently removed as believed not needed
                 #shell_cmd("xhemireg --s {0}{1}".format(sub,suffix), fsdir,do_print=True)
                 # register lh to fsaverage sym
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix), fsdir)
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub,suffix),fsdir)
                 # mirror-reverse subject rh and register to lh fsaverage_sym
                 # though the right hemisphere is not explicitly listed below, it is implied by --lh --xhemi
                 shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub,suffix), fsdir)
             else:
-                print("... Benson: skipping fsaverage_sym registration")
+                print_wrap("skipping fsaverage_sym registration",indent=2)
 
             if separate_out:
                 datalist = ["angle", "eccen", "areas", "all"]
@@ -906,7 +915,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
         if run_glasser == True:
 
             outname = 'Glasser2016'
-
+            print_wrap("running Glasser2016:",indent=1)
             for hemi in ["lh","rh"]:
                 # convert from .annot to mgz
                 shell_cmd("mri_annotation2label --subject fsaverage --hemi {0} --annotation {1}/{2}/{0}.HCPMMP1.annot --seg {0}.glassertemp1.mgz"
@@ -937,14 +946,14 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
                     mapfile = mapfiles[hemi]
                 except:
                     mapfile = ""
+                print_wrap("running Wang: {0}:".format(hemi),indent=1)
                 if os.path.isfile(mapfile) and not force_new_mapping:
-
-                    print("... Wang: {0}, using existing mapping file from subject's SUMA directory".format(hemi))
+                    print_wrap("using existing mapping file from SUMA dir",indent=2)
                     subprocess.call("SurfToSurf -i_{4} ./SUMA/{0}.smoothwm.{3} -i_{4} ./SUMA/std.141.{0}.smoothwm.{3} -output_params {1} -mapfile {2} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
                         .format(hemi,intertype,mapfile,file_format,surf_to_surf_i), shell=True)
                     newmap = False
                 else:
-                    print("... Wang: {0}, generating new mapping file".format(hemi))
+                    print_wrap("generating new mapping file",indent=2)
                     newmap = True
                     subprocess.call("SurfToSurf -i_{3} ./SUMA/{0}.smoothwm.{2} -i_{3} ./SUMA/std.141.{0}.smoothwm.{2} -output_params {1} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
                         .format(hemi,intertype,file_format,surf_to_surf_i), shell=True)       
@@ -967,7 +976,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
                     .format(hemi, outname), shell=True)
 
                 if not skipclust: # do optional surface-based clustering
-                    print("... Wang: {0}, doing clustering".format(hemi))
+                    print_wrap("doing clustering",indent=2)
                     for idx in range(1,26):
                         # clustering steps
                         specfile="./SUMA/{0}{1}_{2}.spec".format(sub,suffix,hemi)  
@@ -983,7 +992,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
                         # pick only biggest cluster
                         if idx is 1:
                             if os.path.isfile("./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname,hemi)):
-                                print("Removing existing file ./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname,hemi)) 
+                                print_wrap("removing existing file ./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname,hemi),indent=2) 
                                 os.remove("./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname,hemi))
                             subprocess.call("3dcalc -a {1}.temp2_ClstMsk_e1.niml.dset -expr 'iszero(a-1)*{2}' -prefix {1}.{0}_cluster.niml.dset"
                                 .format(outname,hemi,idx), shell=True)
@@ -1018,7 +1027,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
         if run_kgs == True:
 
             outname='KGS2016'
-
+            print_wrap("running KGS2016:",indent=1)
             os.chdir(tmpdir)
             for hemi in ["lh","rh"]:
 
@@ -1029,7 +1038,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
 
                     if not os.path.isfile("{1}/{3}/{0}.MPM_{2}.label".format(hemi,atlasdir,roi,outname)):
                         # if label file does not exist, skip it
-                        print("... KGS: file {0}.MPM_{1}.label doesn't exist".format(hemi,roi))
+                        print_wrap("file {0}.MPM_{1}.label doesn't exist".format(hemi,roi),indent=2)
                         continue
                     # Make the intermediate (subject-native) surface:
                     #   --srcsubject is always fsaverage since we assume the input file is an fsaverage file
@@ -1081,7 +1090,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
         os.chdir(curdir)
 
         if os.path.isdir(outdir):
-            print("... ROI output directory ""TEMPLATE_ROIS"" exists, adding '_new'")
+            print_wrap("ROI output directory ""TEMPLATE_ROIS"" exists, adding '_new'",indent=1)
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}_new".format(outdir)) 
         else:
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}".format(outdir)) 
@@ -1286,6 +1295,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
     ------------
     AssertError : Where surface vertices do not match
     """
+    t = time.time()
     #dictionary of RoIs
     roi_dic={'wang': ["V1v", "V1d","V2v", "V2d", "V3v", "V3d", "hV4", "VO1", "VO2", "PHC1", "PHC2",
                     "TO2", "TO1", "LO2", "LO1", "V3B", "V3A", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4",
@@ -1302,7 +1312,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
     elif "sub" in sub:
         # get rid of "sub-" string
         sub = sub[4:]
-    print("SUBJECT:" + sub)
+    print_wrap("SUBJECT:" + sub)
     # check if data from both hemispheres can be found in input
     # check_data
     l_files = []
@@ -1315,10 +1325,10 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
             s_2 = s.replace('.L.','.R.')
             l_files.append(s)
         else:
-            print("Hemisphere could not be determined from file %s" % s)
+            print_wrap("Hemisphere could not be determined from file {0}".format(s),indent=1)
             return None
         if s_2 not in surf_files:
-            print("File %s does not have a matching file from the other hemisphere" % s)
+            print_wrap("File {0} does not have a matching file from the other hemisphere".format(s),indent=1)
             
     l_files = sorted(l_files)
     r_files = sorted(r_files)
@@ -1369,10 +1379,10 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
     # create a list of outdata, with shared values 
     outdata = [ roiobject(is_time_series=is_time_series,roiname=name,tr=TR,nharm=5,stimfreq=10,offset=offset) for name in outnames ]
 
-    print("APPLYING RH ROI: " + l_roifile.split("/")[-1] + " TO DATA:")
-    for x in l_files: print(x.split("/")[-1])
-    print("APPLYING LH ROI: " + r_roifile.split("/")[-1] + " TO DATA:")
-    for x in r_files: print(x.split("/")[-1])
+    print_wrap("applying LH ROI: " + l_roifile.split("/")[-1] + " to data:")
+    for x in l_files: print_wrap(x.split("/")[-1],indent=1)
+    print_wrap("applying RH ROI: " + r_roifile.split("/")[-1] + " to data:")
+    for x in r_files: print_wrap(x.split("/")[-1],indent=1)
    
     for hemi in ["L","R"]:
         if "L" in hemi:
@@ -1388,7 +1398,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
             if roi=='benson':
                 roi_data=roi_data[:,2]
         except OSError as err:
-            print("ROI file: {0} could not be opened".format(cur_roi))
+            print_wrap("ROI file: {0} could not be opened".format(cur_roi))
         roi_n = roi_data.shape[0]
         
         if roi == "wang+benson":
@@ -1401,7 +1411,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
                 # select eccen data from Benson
                 eccen_data=eccen_data[:,1]
             except OSError as err:
-                print("Template eccen file: {0} could not be opened".format(cur_eccen))
+                print_wrap("Template eccen file: {0} could not be opened".format(cur_eccen))
             eccen_n = eccen_data.shape[0]
             assert eccen_n == roi_n, "ROIs and Template Eccen have different number of surface vertices"
             ring_data = np.zeros_like(roi_data)
@@ -1426,8 +1436,11 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
         for run_file in cur_files:
             try:
                 cur_data = surface.load_surf_data(run_file)
+                #img = nib.load(run_file)
+                #img_data = [x.data for x in img.darrays]
+                #cur_data = np.reshape(img_data,(len(img_data[0]),len(img_data)))
             except OSError as err:
-                print("Data file: {0} could not be opened".format(run_file))
+                print_wrap("Data file: {0} could not be opened".format(run_file))
             data_n = cur_data.shape[0]
             assert data_n == roi_n, "Data and ROI have different number of surface vertices"
             for roi_name in newlabel:
@@ -1441,7 +1454,7 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
                 roi_index=roi_index.astype(int)
                 num_vox = len(roi_index)
                 if num_vox == 0:
-                    print(roi_name+"-"+hemi+" "+str(roi_set))
+                    print_wrap(roi_name+"-"+hemi+" "+str(roi_set))
                 roi_t = np.mean(cur_data[roi_index],axis=0)
                 roi_t = roi_t[pre_tr:]
                 out_idx = outnames.index(roi_name+"-"+hemi)
@@ -1457,7 +1470,8 @@ def RoiSurfData(surf_files, roi="wang", is_time_series=True, sub=False, pre_tr=2
                     outdata[bl_idx].num_vox = num_vox
                     for bl_run in bl_data:
                         outdata[bl_idx] = roiobject(bl_run, outdata[bl_idx])
-    print('ROI Surf Data run complete.')
+    elapsed = time.time() - t
+    print_wrap("ROI Surf Data run complete, took {0} seconds".format(elapsed))
     return (outdata, outnames)
 
 def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), test_type="Hot"):
@@ -1832,36 +1846,36 @@ def combineHarmonics(fmriFolder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All'
     task_list=[]
     if tasks=='All':
         for sub in subjects:
-            task_list+=GetBidsData(sub,fmriFolder)
+            task_list+=GetBidsData("{0}/{1}".format(fmriFolder,sub))
         task_list=[re.findall('task-\w+_',x)[0][5:-1] for x in task_list]
         tasks = list(set(task_list))
     if tasks==None:
         print('No task provided. Data to be run together.')
         for sub_int, sub in enumerate(subjects):
             # produce list of files 
-            surf_files = GetBidsData(sub, fmriFolder,std141=std141,session=session)
+            surf_files = GetBidsData("{0}/{1}".format(fmriFolder,sub),std141=std141,session=session)
             # run RoiSurfData
             outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
             # Define the empty array we want to fill or concatenate together
             if sub_int == 0:
                 outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
             else:
-                outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
+                outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=1)
         task_dic['task'], outnames = outdata_arr, outnames
         return task_dic, outnames
     else:
         for task in tasks:
             for sub_int, sub in enumerate(subjects):
                 # produce list of files 
-                surf_files = [f for f in GetBidsData(sub, fmriFolder, std141=std141,session=session) if task in f]
+                surf_files = [f for f in GetBidsData("{0}/{1}".format(fmriFolder,sub),std141=std141,session=session) if task in f]
                 if len(surf_files)>0:
                     # run RoiSurfData
                     outdata, outnames = RoiSurfData(surf_files,roi=roi,fsdir=fsdir,pre_tr=pre_tr,offset=offset[task])
                     # Define the empty array we want to fill or concatenate together
                     if sub_int == 0:
-                        outdata_arr =  np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])
+                        outdata_arr = np.array(outdata,ndmin=2)
                     else:
-                        outdata_arr = np.concatenate((outdata_arr, np.array([np.array(roiobj.fft.sig_complex) for roiobj in outdata])),axis=2)
+                        outdata_arr = np.concatenate((outdata_arr,np.array(outdata,ndmin=2)),axis=0)
             task_dic[task], outnames = outdata_arr, outnames
         return task_dic, outnames
 
