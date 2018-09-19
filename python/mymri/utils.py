@@ -773,18 +773,18 @@ def BidsLinks(anat_session,exp_session,remove_only=False):
                     # don't jump back into file creation loop
                         generating_files = False
 
-def HardCreate(bidsdir,experiment,subjects="all",fsdir="main"):
+def HardCreate(bids_dir,experiment,subjects="all",fs_dir="main"):
     """Function creates hardlinks from freesurfer directory to the experiment folder
 
     Parameters
     ------------
-    bidsdir : string
+    bids_dir : string
         The directory for BIDS Analysis. Should contain the freesurfer folder and experiment folder.
     experiment : string
         Used for location of the experiment folder within the BIDS directory
     subjects : list of strings
         This is a list of the subjects that require hardlinks to be made
-    fsdir : string
+    fs_dir : string
         The freesurfer directory
     Returns
     ------------
@@ -793,17 +793,17 @@ def HardCreate(bidsdir,experiment,subjects="all",fsdir="main"):
         is actually a hard link of the old one.
     """
     checking_dic = {}
-    if fsdir.lower() in "main":
-        fsdir = "{0}/freesurfer".format(bidsdir)
+    if fs_dir.lower() in "main":
+        fs_dir = "{0}/freesurfer".format(bids_dir)
         if "all" in subjects:
             subjects = [x for x in os.path.os.listdir(fs_dir) if "sub-" in x[0:4]]
         for sub in subjects:
-            src = "{0}/{1}".format(fsdir,sub)
+            src = "{0}/{1}".format(fs_dir,sub)
             if not os.path.isdir(src):
                 print("... freesurfer directory {0} does not exist, skipping".format(src))
                 continue
             else:
-                dst = "{0}/{1}/freesurfer/{2}".format(bidsdir,experiment,sub)
+                dst = "{0}/{1}/freesurfer/{2}".format(bids_dir,experiment,sub)
                 if os.path.isdir(dst):
                     # remove dst directory, before making link
                     shutil.rmtree(dst)
