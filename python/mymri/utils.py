@@ -1,9 +1,7 @@
-import os, subprocess, sys, glob, shutil, tempfile, re, stat
-from os.path import join, abspath
-import argparse
+import os, subprocess, glob, shutil, stat
+from os.path import join
 import json
 import nibabel as nib
-import nipype.interfaces.fsl as fsl
 import numpy as np
 import tarfile
 
@@ -112,7 +110,7 @@ def bids_fmap(sub_id, src_dir, dest_dir, func_dir, update_metadata=False):
                 if not fmap_meta_src:
                     fmap_meta_src = fmap_src
                 else:
-                    fmap_meta_src = dti_meta_src[0]
+                    fmap_meta_src = fmap_meta_src[0]
                 func_runs = [os.sep.join(os.path.normpath(f).split(os.sep)[-3:]) for f in glob.glob(os.path.join(func_dir,'*task*bold.nii.gz'))]
                 fmap_meta = get_meta(fmap_meta_src, "fieldmap",'',func_runs)
                 json.dump(fmap_meta,open(fmap_meta_dest,'w'))
@@ -149,7 +147,7 @@ def bids_dti(sub_id, src_dir, dest_dir, update_metadata=False):
             dti_index = cur_src.index('run')
             dtiname = cur_src[dti_index:]
             # bring to subject directory and divide into sbref and bold
-            dti_dest = os.path.join(dest_dir, sub_id + '_' + filename + '.nii.gz')
+            dti_dest = os.path.join(dest_dir, sub_id + '_' + dtiname + '.nii.gz')
             dti_dest = dti_dest.replace('run_','run-').replace('dti','dwi')
         else:
             dti_dest = corr_name[counter]
@@ -321,7 +319,7 @@ def bids_sbref(sub_id, src_dir, dest_dir, update_metadata=False):
                 sbref_meta = get_meta(sbref_meta_src, 'sbref', filename)
                 json.dump(sbref_meta,open(sbref_meta_dest,'w'))
             except IndexError:
-                print("Metadata couldn't be created for %s" % sbref_file)
+                print("Metadata couldn't be created for %s" % sbref_dest)
 
 def bids_task(sub_id, src_dir, dest_dir, update_metadata=False):
     """
@@ -648,7 +646,7 @@ def get_subdir(a_dir):
 # *** UTILITY FUNCTIONS 
 # *****************************
 
-def BidsOrganizer(
+def bids_organizer(
     study_dir,
     id_correction=None, 
     run_correction=None, 
@@ -741,39 +739,7 @@ def BidsOrganizer(
     # remove temp folder
     shutil.rmtree(temp_dir)
 
-
-def BidsLinks(anat_session,exp_session,remove_only=False):
-    sublist = [x.split("/")[-1] for x in glob.glob(exp_session+"/sub*")]
-    for sub in sublist:
-        for ses in glob.glob(exp_session+"/"+sub+"/ses*"): 
-            # usually only one session, but allow for more than one
-            target_anat = ses+"/anat"
-            generating_files = True
-            while generating_files:
-                target_files = [x for x in glob.glob(target_anat+"/*") if "inplane" not in x ] 
-                if not target_files:
-                    try:
-                        source_anat = glob.glob(anat_session+"/"+sub+"/ses*")[0]+"/anat"
-                        source_files = [x for x in glob.glob(source_anat+"/*") if "inplane" not in x ]
-                    except:
-                        print("ERROR: Source anatomies missing for subject {0} in anat session {1}".format(sub,anat_session))
-                    target_files = [x.replace(source_anat,target_anat) for x in source_files]
-                    if ses.split("/")[-1] not in "ses-01":
-                        # if not session 1, replace session id
-                        target_files = [x.replace("ses-01",ses.split("/")[-1]) for x in target_files]
-                    for i, item in enumerate(target_files):
-                        os.symlink(source_files[i], target_files[i])
-                    generating_files = False
-                    print("Made symlinks to source anatomies for subject {0} in anat session {1}".format(sub,anat_session))
-                else:
-                    for target in target_files:
-                        if os.path.islink(target):
-                            os.remove(target)
-                    if remove_only:
-                    # don't jump back into file creation loop
-                        generating_files = False
-
-def HardCreate(bids_dir,experiment,subjects="all",fs_dir="main"):
+def hard_create(bids_dir,experiment,subjects="all",fs_dir="main"):
     """Function creates hardlinks from freesurfer directory to the experiment folder
 
     Parameters
@@ -807,12 +773,12 @@ def HardCreate(bids_dir,experiment,subjects="all",fs_dir="main"):
                 if os.path.isdir(dst):
                     # remove dst directory, before making link
                     shutil.rmtree(dst)
-                HardCopy(src,dst)
+                hard_copy(src,dst)
                 checking_dic[sub] = [src,dst]
-        HardCheck(checking_dic)
+        hard_check(checking_dic)
     return checking_dic
 
-def HardCheck(checking_dic):
+def hard_check(checking_dic):
     correct_int = 0
     error_log = []
     for key in checking_dic.keys():
@@ -827,9 +793,8 @@ def HardCheck(checking_dic):
     else:
         print('Files not hard link: \n {0}'.format(error_log))
 
-def HardCopy(src, dst):
+def hard_copy(src, dst):
     working_dir = os.getcwd()
-    dest = abspath(dst)
     os.mkdir(dst)
     os.chdir(src)
     for root, dirs, files in os.walk('.'):

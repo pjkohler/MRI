@@ -1,4 +1,6 @@
-import os, subprocess, sys, glob, shutil, tempfile, re, stat, time, textwrap, nilearn, pandas
+import os, subprocess, sys, glob, shutil, tempfile, re, time, textwrap
+from nilearn import surface as nl_surf
+from nilearn import signal as nl_signal
 from os.path import expanduser
 import numpy as np
 import pandas as pd
@@ -6,9 +8,7 @@ import scipy as scp
 import nibabel as nib
 import matplotlib.pyplot as plt
 import scipy.stats as stats
-import scipy.special as special
 from itertools import combinations
-from sklearn.linear_model import LinearRegression
 
 ## HELPER FUNCTIONS
 def print_wrap(msg,indent=0):
@@ -97,7 +97,7 @@ def fft_offset(complex_in, offset_rad):
     phase_out = np.mean(np.angle(complex_out))
     return complex_out, amp_out, phase_out
 
-def realImagSplit(sig_complex):
+def real_imag_split(sig_complex):
     # takes complex data and splits into real and imaginary
     sig_complex=np.concatenate((np.real(sig_complex),np.imag(sig_complex)),axis=1)
     return sig_complex
@@ -108,7 +108,7 @@ def flatten_1d(arr):
     arr = arr.reshape(len(arr),1)
     return arr
 
-def eigFourierCoefs(xydata):
+def eig_fouriercoefs(xydata):
     """Performs eigenvalue decomposition
     on 2D data. Function assumes 2D
     data are Fourier coefficients
@@ -120,7 +120,7 @@ def eigFourierCoefs(xydata):
     m, n = xydata.shape
     if n != 2:
         # ensure data is split into real and imaginary
-        xydata = realImagSplit(xydata)
+        xydata = real_imag_split(xydata)
         m, n = xydata.shape
         if n != 2:
             print_wrap('Data in incorrect shape - please correct')
@@ -148,26 +148,6 @@ def eigFourierCoefs(xydata):
            smaller_eigenval,larger_eigenvec, 
            larger_eigenval, phi)
 
-def GetBidsData(target_folder,file_type='suma_native',session='01'):
-    file_list = []
-    if session=='all':
-        session_folders = ["{0}/{1}".format(target_folder,s) for s in os.listdir(target_folder) if 'ses' in s]
-    else:
-        session_folders = ["{0}/ses-{1}".format(target_folder,str(session).zfill(2))]
-    for cur_ses in session_folders:
-        cur_dir = '{0}/func/'.format(cur_ses)
-        if file_type in ['suma_std141','sumastd141']:
-            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'surf.std141' in x]
-        elif file_type in ['suma_native','sumanative']:
-            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'surf.native' in x]
-        elif file_type in ['fs_native','fsnative']:
-            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'fsnative' in x]
-        else:
-            print_wrap('unknown file_type {0} provided'.format(file_type),indent=3)
-            print_wrap('... using fsnative'.format(file_type),indent=3)
-            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'fsnative' in x]
-    return file_list
-
 def create_file_dictionary(experiment_dir):
     # creates file dictionary necessary for Vol2Surf
     subjects = [folder for folder in os.listdir(experiment_dir) if 'sub' in folder and '.html' not in folder]
@@ -179,6 +159,8 @@ def create_file_dictionary(experiment_dir):
     return files_dic
 
 ## CLASSES
+    
+# used by roi_surf_data
 class roiobject:
     def __init__(self, curdata=np.zeros((120, 1)), curobject=None, is_time_series=True, roiname="unknown", tr=99, stimfreq=99, nharm=99, num_vox=0, offset=0):
         if curobject is None:
@@ -211,19 +193,20 @@ class roiobject:
         else:                
             return np.mean(self.data,axis=0)  
     def fourieranalysis(self):
-        return MriFFT(self.average(),
+        return fft_analysis(self.average(),
             tr=self.tr,
             stimfreq=self.stim_freq,
             nharm=self.num_harmonics,
             offset=self.offset)
-# define output object
+
+# used by mrifft
 class fftobject:
     def __init__(self):
         for key in [ "spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", 
                     "sig_amp", "sig_phase", "sig_complex", "noise_complex", "noise_amp", "noise_phase" ]:
             setattr(self, key, [])
 
-# define group data object
+# used by roi_group_analysis
 class groupobject:
     def __init__(self, amp=np.zeros((3,1)), phase=np.zeros((3,1)), zSNR=0, hotT2=np.zeros((2,1)), cycle=np.zeros((2,12)), harmonics="1",roi_name="unknown"):
         self.amp = amp
@@ -241,7 +224,27 @@ class groupobject:
 
 ## MAIN FUNCTIONS
 
-def Suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=False, fs_dir=None): 
+def get_bids_data(target_folder,file_type='suma_native',session='01'):
+    file_list = []
+    if session=='all':
+        session_folders = ["{0}/{1}".format(target_folder,s) for s in os.listdir(target_folder) if 'ses' in s]
+    else:
+        session_folders = ["{0}/ses-{1}".format(target_folder,str(session).zfill(2))]
+    for cur_ses in session_folders:
+        cur_dir = '{0}/func/'.format(cur_ses)
+        if file_type in ['suma_std141','sumastd141']:
+            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'surf.std141' in x]
+        elif file_type in ['suma_native','sumanative']:
+            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'surf.native' in x]
+        elif file_type in ['fs_native','fsnative']:
+            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'fsnative' in x]
+        else:
+            print_wrap('unknown file_type {0} provided'.format(file_type),indent=3)
+            print_wrap('... using fsnative'.format(file_type),indent=3)
+            file_list += [cur_dir+x for x in os.path.os.listdir(cur_dir) if x[-3:]=='gii' and 'fsnative' in x]
+    return file_list
+
+def run_suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=False, fs_dir=None): 
     """
     Wrapper function for easy opening of SUMA viewer.
     Supports opening suma surfaces both in native and std141 space.
@@ -279,7 +282,7 @@ def Suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=False
     else:
         subprocess.call("SUMA -spec {0} &".format(spec_file), shell=True)
 
-def Neuro2Radio(in_files):
+def neuro_to_radio(in_files):
     for scan in in_files:
         name, suffix = get_name_suffix(scan)
         old_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True, universal_newlines=True)
@@ -298,7 +301,7 @@ def Neuro2Radio(in_files):
         new_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True, universal_newlines=True)
         print_wrap("new orientation: {0}".format(new_orient))
 
-def Pre(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_file=None, pad_ap=0, pad_is=0, diff_mat=False, keep_temp=False):
+def pre_slice(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_file=None, pad_ap=0, pad_is=0, diff_mat=False, keep_temp=False):
     """
     Function for first stage of preprocessing
     Slice-time correction and deobliqueing, in that order.
@@ -313,11 +316,11 @@ def Pre(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_fi
         ref_file = in_files[-1] # use last as reference
     if tr_dur is 0:
         # TR not given, so compute
-        tr_dur = subprocess.check_output("3dinfo -tr -short {0}".format(ref), shell=True)
+        tr_dur = subprocess.check_output("3dinfo -tr -short {0}".format(ref_file), shell=True)
         tr_dur = tr_dur.rstrip("\n")
     if total_tr is 0:
         # include all TRs, so get max subbrick value
-        total_tr = subprocess.check_output("3dinfo -nvi -short {0}".format(ref), shell=True)
+        total_tr = subprocess.check_output("3dinfo -nvi -short {0}".format(ref_file), shell=True)
         total_tr = total_tr.rstrip("\n")
     else:
         # subject has given total number of TRs to include, add preTR to that
@@ -359,7 +362,7 @@ def Pre(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_fi
 
         if diff_mat:
             # add file_names to list, move later
-            namelist.append(file_name)
+            name_list.append(file_name)
             if cur_file == ref_file:
                 ref_name = file_name
         else:
@@ -367,7 +370,7 @@ def Pre(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_fi
     
     if diff_mat:
         # take care of different matrices, and move
-        for file_name in namelist:
+        for file_name in name_list:
                 subprocess.call("@Align_Centers -base {1}.ts.do+orig -dset {0}.ts.do+orig".format(file_name,ref_name), shell=True)
                 subprocess.call("3dresample -master {1}.ts.do+orig -prefix {0}.ts.do.rs+orig -inset {0}.ts.do_shft+orig".format(file_name,ref_name), shell=True)
                 subprocess.call("3dAFNItoNIFTI -prefix {1}/{0}.ts.do.rs.nii.gz {0}.ts.do.rs+orig".format(file_name,cur_dir), shell=True)   
@@ -377,7 +380,7 @@ def Pre(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_fi
         # remove temporary directory
         shutil.rmtree(tmp_dir)
 
-def Volreg(in_files, ref_file='last', slow=False, keep_temp=False):
+def pre_volreg(in_files, ref_file='last', slow=False, keep_temp=False):
     """
     Function for second stage of preprocessing: Volume registation.
     Typically run following mriPre.py
@@ -412,7 +415,7 @@ def Volreg(in_files, ref_file='last', slow=False, keep_temp=False):
         # remove temporary directory
         shutil.rmtree(tmp_dir)
 
-def Scale(in_files, no_dt=False, keep_temp=False):
+def pre_scale(in_files, no_dt=False, keep_temp=False):
     """
     Function for third stage of preprocessing: Scaling and Detrending.
     Typically run following mriPre.py and mriVolreg.py 
@@ -451,7 +454,7 @@ def Scale(in_files, no_dt=False, keep_temp=False):
         # remove temporary directory
         shutil.rmtree(tmp_dir)
 
-def Vol2Surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, sessions=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard', std141=False, keep_temp=False):
+def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, sessions=None, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard', std141=False, keep_temp=False):
     """
     Function for converting from volume to surface space.  
     Supports suma surfaces both in native and std141 space.
@@ -638,7 +641,7 @@ def Vol2Surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, se
     print_wrap('Vol2Surf run complete')
     return file_list
 
-def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, out_dir=None, fs_dir=None, surf_vol='standard', std141=False, keep_temp=False):
+def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, out_dir=None, fs_dir=None, surf_vol='standard', std141=False, keep_temp=False):
     """
     Function for converting from surface to volume space.  
     Supports suma surfaces both in native and std141 space.
@@ -696,7 +699,7 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
     copy_suma_files(suma_dir,tmp_dir,subject)
     
     os.chdir(tmp_dir)
-    for curfile in in_files:
+    for cur_file in in_files:
         shutil.copy("{0}/{1}".format(cur_dir,cur_file),tmp_dir)
         file_name, file_suffix = get_name_suffix(cur_file,surface=True)   
                 
@@ -712,16 +715,16 @@ def Surf2Vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=N
                     -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {4} \
                     -sdata {5}.niml.dset -map_func {6} -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
                     -prefix {11}/{5}"
-                    .format(specprefix,subject,suffix,hemi,vol_file,file_name,mapfunc,index,wm_mod,gm_mod,steps,tmp_dir), shell=True)
+                    .format(specprefix,subject,suffix,hemi,vol_file,file_name,map_func,index,wm_mod,gm_mod,steps,tmp_dir), shell=True)
 
         subprocess.call("3dcopy {2}/{0}+orig {1}/{0}.nii.gz".format(file_name,out_dir,tmp_dir), shell=True)
     
     os.chdir(cur_dir)    
-    if keeptemp is not True:
+    if keep_temp is not True:
         # remove temporary directory
         shutil.rmtree(tmp_dir) 
 
-def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode",force_new_mapping=False):
+def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False, separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode",force_new_mapping=False):
     """Function for generating ROIs in subject's native space 
     predicted from the cortical surface anatomy.
     Allows this to be done using methods described in:
@@ -1120,7 +1123,7 @@ def RoiTemplates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="st
     #reset the subjects dir
     os.environ["SUBJECTS_DIR"] = old_subject_dir
 
-def MriSurfSmooth(subject,infiles,fsdir=None,std141=None,blursize=0,keeptemp=False,outdir="standard"):
+def surf_smooth(subject,infiles,fsdir=None,std141=None,blursize=0,keeptemp=False,outdir="standard"):
     """
     Function smooths surface MRI data
     - this takes in regular and standardised data
@@ -1187,7 +1190,7 @@ def MriSurfSmooth(subject,infiles,fsdir=None,std141=None,blursize=0,keeptemp=Fal
         #remove temporary directory
         shutil.rmtree(tmpdir)        
 
-def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
+def fft_analysis(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     """
     offset=0, positive values means the first data frame was shifted forwards relative to stimulus
               negative values means the first data frame was shifted backwards relative to stimulus
@@ -1269,7 +1272,7 @@ def MriFFT(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
         output.noise_phase.append( noise_phase )
     return output   
 
-def RoiSurfData(surf_files, roi_type="wang", is_time_series=True, sub=False, pre_tr=2, do_scale=True,do_detrend=True, use_regressors='standard', offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"], do_scaling = True, report_timing=False):
+def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pre_tr=2, do_scale=True,do_detrend=True, use_regressors='standard', offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"], do_scaling = True, report_timing=False):
     """
     region of interest surface data
     
@@ -1394,7 +1397,7 @@ def RoiSurfData(surf_files, roi_type="wang", is_time_series=True, sub=False, pre
             r_roifile = r_roifile
             l_roifile = l_roifile.replace('rh','lh')
         print("Unknown ROI labels, using numeric labels")
-        max_idx = int(max(nilearn.surface.load_surf_data(l_roifile))+1)
+        max_idx = int(max(nl_surf.load_surf_data(l_roifile))+1)
         newlabel = ["roi_{:02.0f}".format(x) for x in range(1,max_idx)]
     
     outnames = [x+"-L" for x in newlabel] + [x+"-R" for x in newlabel] + [x+"-BL" for x in newlabel]
@@ -1421,11 +1424,11 @@ def RoiSurfData(surf_files, roi_type="wang", is_time_series=True, sub=False, pre
             cur_files = r_files
         try:
             # uses surface module of nilearn to import data in .gii format
-            roi_data = nilearn.surface.load_surf_data(cur_roi)
+            roi_data = nl_surf.load_surf_data(cur_roi)
             # Benson should just use ROIs
             if roi_type=='benson':
                 roi_data=roi_data[:,2]
-        except OSError as err:
+        except OSError:
             print_wrap("ROI file: {0} could not be opened".format(cur_roi))
         roi_n = roi_data.shape[0]
         
@@ -1435,10 +1438,10 @@ def RoiSurfData(surf_files, roi_type="wang", is_time_series=True, sub=False, pre
             else:
                 cur_eccen = r_eccenfile
             try:
-                eccen_data = nilearn.surface.load_surf_data(cur_eccen)
+                eccen_data = nl_surf.load_surf_data(cur_eccen)
                 # select eccen data from Benson
                 eccen_data=eccen_data[:,1]
-            except OSError as err:
+            except OSError:
                 print_wrap("Template eccen file: {0} could not be opened".format(cur_eccen))
             eccen_n = eccen_data.shape[0]
             assert eccen_n == roi_n, "ROIs and Template Eccen have different number of surface vertices"
@@ -1463,7 +1466,7 @@ def RoiSurfData(surf_files, roi_type="wang", is_time_series=True, sub=False, pre
             roi_data = ring_data
         for run_file in cur_files:
             try:
-                cur_data = nilearn.surface.load_surf_data(run_file)
+                cur_data = nl_surf.load_surf_data(run_file)
                 #gl.resetdefaults()
                 #gl.meshload(run_file)
                 
@@ -1514,7 +1517,7 @@ def RoiSurfData(surf_files, roi_type="wang", is_time_series=True, sub=False, pre
                     assert len(conf_file) < 2, "more than one confound file matching run file {0}".format(run_file)
                     
                     # load confounds as pandas data frame
-                    df = pandas.read_csv(conf_file[0], '\t', na_values='n/a')
+                    df = pd.read_csv(conf_file[0], '\t', na_values='n/a')
                     # drop pre_trs
                     df = df[pre_tr:]
                     
@@ -1535,7 +1538,7 @@ def RoiSurfData(surf_files, roi_type="wang", is_time_series=True, sub=False, pre
                         first_run = False;
                         print_wrap("using {0} confound regressors".format(len(df.columns)),indent=3)
                     
-                    new_data = nilearn.signal.clean(cur_data, detrend=True, standardize=False, confounds=df.as_matrix(), low_pass=None, high_pass=None, t_r=TR, ensure_finite=False)
+                    new_data = nl_signal.clean(cur_data, detrend=True, standardize=False, confounds=df.as_matrix(), low_pass=None, high_pass=None, t_r=TR, ensure_finite=False)
                     cur_data = np.transpose(new_data)
                 except:
                     print_wrap("Data file: {0}, detrending failure".format(run_file.split('/')[-1]))
@@ -1573,7 +1576,7 @@ def RoiSurfData(surf_files, roi_type="wang", is_time_series=True, sub=False, pre
         print_wrap("ROI Surf Data run complete, took {0} seconds".format(elapsed))
     return (outdata, outnames)
 
-def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), test_type="Hot"):
+def hotelling_t2(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), test_type="Hot"):
     assert np.all(np.iscomplex(in_vals)), "input variable is not complex"
     assert (alpha > 0.0) & (alpha < 1.0), "alpha must be between 0 and 1"
 
@@ -1648,7 +1651,7 @@ def HotT2Test(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), tes
         p_val = 1-scp.stats.f.cdf(tsqrd * (1/mult_factor),df1,df2);            
     return(tsqrd,p_val,t_crit)
 
-def FitErrorEllipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=True):
+def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=True):
     """ Function uses eigen value decomposition
     to find two perpendicular axes aligned with xydata
     where the eigen vector correspond to variances 
@@ -1698,7 +1701,7 @@ def FitErrorEllipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=True
 
     if len(xydata[np.iscomplex(xydata)])==len(xydata):
     
-        xydata=realImagSplit(xydata)
+        xydata=real_imag_split(xydata)
     else:
         check=input('Data not complex. Should run continue? True/False')
         if check == False:
@@ -1709,7 +1712,7 @@ def FitErrorEllipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=True
     try:
         (mean_xy, sampCovMat, smaller_eigenvec, 
            smaller_eigenval,larger_eigenvec, 
-           larger_eigenval, phi)=eigFourierCoefs(xydata)
+           larger_eigenval, phi)=eig_fouriercoefs(xydata)
     except:
         print('Unable to run eigen value decomposition. Probably data have only 1 sample')
         return None
@@ -1889,7 +1892,7 @@ def FitErrorEllipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=True
         plt.show()
     return amp_mean, amp_diff, phase_mean, phase_diff, zSNR, error_ellipse
 
-def SubjectAnalysis(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All', pre_tr=0, roi_type='wang+benson',session='all',tasks='All', offset=None,file_type='fsnative',report_timing=True):
+def roi_subjects(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All', pre_tr=0, roi_type='wang+benson',session='all',tasks='All', offset=None,file_type='fsnative',report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -1946,9 +1949,9 @@ def SubjectAnalysis(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All',
         print_wrap("Running SubjectAnalysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,offset))
         for sub_int, sub in enumerate(subjects):
             # produce list of files 
-            surf_files = GetBidsData("{0}/{1}".format(exp_folder,sub),file_type=file_type,session=session)
+            surf_files = get_bids_data("{0}/{1}".format(exp_folder,sub),file_type=file_type,session=session)
             # run RoiSurfData
-            outdata, curnames = RoiSurfData(surf_files,roi_type=roi_type,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
+            outdata, curnames = roi_get_data(surf_files,roi_type=roi_type,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
             # Define the empty array we want to fill or concatenate together
             if sub_int == 0:
                 outdata_arr = np.array(outdata,ndmin=2)
@@ -1969,7 +1972,7 @@ def SubjectAnalysis(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All',
             if 'all' in [x.lower() for x in task_list]:
                 task_list=[]
                 for sub in subjects:
-                    task_list+=GetBidsData("{0}/{1}".format(exp_folder,sub))
+                    task_list+=get_bids_data("{0}/{1}".format(exp_folder,sub))
                 task_list=[re.findall('task-\w+_',x)[0][5:-1] for x in task_list]
                 task_list = list(set(task_list))
             # make_dict and assign pre_tr and offset to dict
@@ -1980,10 +1983,10 @@ def SubjectAnalysis(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All',
             print_wrap("Running SubjectAnalysis on task {0}, pre-tr: {1}, offset: {2}".format(task,pre_tr,offset))
             for sub_int, sub in enumerate(subjects): 
                 # produce list of files 
-                surf_files = [f for f in GetBidsData("{0}/{1}".format(exp_folder,sub),file_type=file_type,session=session) if task in f]
+                surf_files = [f for f in get_bids_data("{0}/{1}".format(exp_folder,sub),file_type=file_type,session=session) if task in f]
                 if len(surf_files)>0:
                     # run RoiSurfData
-                    outdata, curnames = RoiSurfData(surf_files,roi_type=roi_type,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
+                    outdata, curnames = roi_get_data(surf_files,roi_type=roi_type,fsdir=fsdir,pre_tr=pre_tr,offset=offset)
                     # Define the empty array we want to fill or concatenate together
                     if sub_int == 0:
                         outdata_arr = np.array(outdata,ndmin=2)
@@ -1998,7 +2001,7 @@ def SubjectAnalysis(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All',
         elapsed = time.time() - t
         print_wrap("SubjectAnalysis complete, took {0} seconds".format(elapsed))
 
-def GroupAnalysis(subject_data, outnames, harmonic_list=['1'],output='all',ellipse_type='SEM', make_plot=False, return_rad=True):
+def roi_group(subject_data, outnames, harmonic_list=['1'],output='all',ellipse_type='SEM', make_plot=False, return_rad=True):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
     ------------
@@ -2057,13 +2060,13 @@ def GroupAnalysis(subject_data, outnames, harmonic_list=['1'],output='all',ellip
                 xydata = np.array(xydata,ndmin=2)
                 
                 # compute elliptical errors
-                amp_mean, amp_diff, phase_mean, phase_diff, zSNR, error_ellipse = FitErrorEllipse(xydata,ellipse_type,make_plot,return_rad)
+                amp_mean, amp_diff, phase_mean, phase_diff, zSNR, error_ellipse = fit_error_ellipse(xydata,ellipse_type,make_plot,return_rad)
                 
                 assert amp_diff[0,0] >= 0, "warning: ROI {0} with task {1}: lower error bar is smaller than zero".format(outnames[r],task)  
                 assert amp_diff[0,1] >= 0, "warning: ROI {0} with task {1}: upper error bar is smaller than zero".format(outnames[r],task)     
                 
                 # compute Hotelling's T-squared:
-                hot_tval, hot_pval, hot_crit = HotT2Test(xydata)
+                hot_tval, hot_pval, hot_crit = hotelling_t2(xydata)
                 
                 if h == 0: # first harmonic
                     cur_amp = np.concatenate((np.array(amp_mean,ndmin=2),amp_diff),axis=1);
@@ -2095,200 +2098,3 @@ def GroupAnalysis(subject_data, outnames, harmonic_list=['1'],output='all',ellip
         elapsed = time.time() - start_time
     print_wrap("Group analysis complete, took {0} seconds".format(int(elapsed)))
     return group_dictionary
-                
-#                ellipse_dic[ee_name] = error_ellipse
-#                if r==0 and h ==0:
-#                    t=np.array([[outnames[r],amp_mean,amp_diff[0],amp_diff[1],phase_mean,phase_diff[0],phase_diff[1],zSNR]])
-#                elif h == 0:
-#                    t=np.concatenate((t,np.array([[outnames[r],amp_mean,amp_diff[0],amp_diff[1],phase_mean,phase_diff[0],phase_diff[1],zSNR]])),axis=0)
-#                elif r == 0:
-#                    t=np.array([[amp_mean,amp_diff[0],amp_diff[1],phase_mean,phase_diff[0],phase_diff[1],zSNR]])
-#                else:
-#                    t=np.concatenate((t,np.array([[amp_mean,amp_diff[0],amp_diff[1],phase_mean,phase_diff[0],phase_diff[1],zSNR]])),axis=0)
-#                harmonic_measures=[measure+str(h+1) for measure in ['AmpMean','AmpLowerBound','AmpUpperBound','PhaseMean','PhaseLowerBound','PhaseUpperBound','zSNR']]
-#                harmonic_name_list+=harmonic_measures
-#                
-#                if h == 0:
-#                    overall=t
-#                else:
-#                    overall=np.concatenate((overall,t),axis=1)
-#        
-#        # construct dataframe for output
-#        ampPhaseZSNR_df=pd.DataFrame(data=overall,columns=harmonic_name_list,index=outnames)
-#        output = str(output).lower()
-#        phase = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Phase' in col]]
-#        amp = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'Amp' in col]]
-#        zSNR = ampPhaseZSNR_df[[col for col in ampPhaseZSNR_df.columns if 'z' in col]]
-#        
-#        if output == 'all':
-#            concat_columns = [phase, amp, zSNR]
-#        else:
-#            concat_columns = []
-#            if 'phase' in output:
-#                concat_columns.append(phase)
-#            if 'amp' in output:
-#                concat_columns.append(amp)
-#            if 'zsnr' in output:
-#                concat_columns.append(zSNR)
-#        ampPhaseZSNR_df = pd.concat((concat_columns),axis=1)
-#        print('DataFrame constructed')
-#        output_dictionary[task] = [ampPhaseZSNR_df, error_ellipse_dic]
-#    return output_dictionary
-
-def graphRois(combined_harmonics,outnames,tasks=['cont'],avg_cross_subjects = True,subjects=None,plot_by_subject=False,harmonic=1,rois=['V1','V2','V3'],hemisphere='BL',figsize=6):
-    """This function will graph RoI data. 
-    Parameters
-    ------------
-    combined_harmonic : dictionary of tasks 
-        For each task there is an array of complex data. 
-        Must be in below shape: RoI x Hemisphere x Subjects.
-        If data has been averaged across subjects
-        then will be in shape: RoI x Hemisphere
-    outnames : list
-        This will be a list of RoI names produced
-        by RoiSurfData
-    tasks : list of strings, Default ['cont']
-        List of all tasks that should be run.
-        Default is just the contrast condition
-    avg_across_subjects : Boolean, Default True
-        Will average across subjects if required
-    subjects : list, default None
-        List of subjects. Required if you wish to plot by 
-        subject
-    plot_by_subject : boolean, default False
-        How should data be plotted? Either will
-        be plotted by subject or will
-        be plotted by above or below inverse neg regression
-    harmonic : integer, default 1
-        Select harmonic required. Options start at 1,
-        as in 1st harmonic, 2nd etc.
-    rois : list, default ['V1','V2','V3']
-        List of RoIs interested in
-    hemisphere : string, default 'BL'
-        Options are 'L', 'R' or 'BL'
-    figsize : integer, default 6
-        Sets the figsize of graphs produced
-    Returns
-    ------------
-    output : dictionary of numpy arrays
-        Broken down by task.
-        Returns the numpy array of values
-        with the addition of sign (+1/-1)
-        for above or below the perpendicular
-        of regression line through the origin
-    """
-    output = {}
-    # input checking
-    if plot_by_subject == True:
-        assert subjects != None,'Unable to plot by subject, no subject IDs given.'
-    # Initial user input checking
-    harmonic-=1
-    for task in tasks:
-        # looking at only one task
-        output[task]=[]
-        combined_harmonic = combined_harmonics[task]
-        if combined_harmonic.ndim == 3 and avg_cross_subjects == True:
-            # averaging across subjects
-            r,h,s = combined_harmonic.shape
-            real = np.real(combined_harmonic)
-            imag = np.imag(combined_harmonic)
-            real_mean = np.mean(real,axis=-1)
-            imag_mean = np.mean(imag,axis=-1)
-            real_mean = flatten_1d(real_mean)
-            imag_mean = flatten_1d(imag_mean)
-            combined_harmonic = np.concatenate((real_mean,imag_mean),axis=1)
-            combined_harmonic = combined_harmonic.view(dtype=np.complex128)
-            combined_harmonic = combined_harmonic.reshape(r,h)
-        if combined_harmonic.ndim == 3 and avg_cross_subjects == False and subjects == None:
-            r,h,s = combined_harmonic.shape
-            subjects = [sub_n for sub_n in range(s)]
-        hemisphere = hemisphere.upper()
-        assert hemisphere in ['L','R','BL'], 'Hemisphere incorrect. See docstring for options'
-
-        # select only specific hemisphere to look at
-        ROIs_hemisphere={x:i for i,x in enumerate(outnames) if hemisphere in x}
-        # Create linear regression model for later use
-        linear_reg=LinearRegression()
-        ROI_coefs = {}
-        # Loop through RoIs and produce scatter plot
-        for roi in rois:
-            ROI_coef = []
-            v = {k:ROIs_hemisphere[k] for k in ROIs_hemisphere.keys() if roi in k}
-            plt.figure(figsize=(figsize,figsize))
-            # If using data averaged across subjects
-            if subjects == None or len(subjects) ==1 :
-                # select the data based on desired harmonic and the RoI
-                harmonic_user_data = combined_harmonic[min(v.values()):max(v.values())+1,harmonic]
-                m, = harmonic_user_data.shape
-                user_data = harmonic_user_data
-                user_data = user_data.reshape(m,1)
-                # split complex data into real and imaginary
-                user_data = realImagSplit(user_data)
-                if plot_by_subject==True:
-                    plt.scatter(user_data[:,0],user_data[:,1])
-                all_user_data = user_data
-                subjects = ['Mean Subject Data']
-            else:
-                first_iteration = True
-                # select the data across subjects based on desired harmonic and the RoI
-                harmonic_user_data = combined_harmonic[min(v.values()):max(v.values())+1,harmonic,:]
-                m, u = harmonic_user_data.shape
-                for s, subject in enumerate(subjects):
-                    user_data = harmonic_user_data[:,s]
-                    user_data = user_data.reshape(m,1)
-                    user_data = realImagSplit(user_data)
-                    if first_iteration == True:
-                        all_user_data = user_data
-                        first_iteration = False
-                    else:
-                        all_user_data = np.concatenate((all_user_data,user_data),axis=0)
-                    if plot_by_subject==True:
-                        # plot individual subjects
-                        plt.scatter(user_data[:,0],user_data[:,1])
-            # Create graph
-            plt.title(roi)
-            plt.axis('equal')
-            plt.xlabel('Real')
-            plt.ylabel('Imaginary')
-
-            # Add line for axes
-            plt.axhline(color = 'k', linewidth = 1)
-            plt.axvline(color = 'k', linewidth = 1)
-            # Create legend
-            if plot_by_subject == True:
-                additional_legend = subjects
-                plt.legend(['linear fit','perpendicular fit']+additional_legend,loc=4)
-            else:
-                additional_legend = ['Positive','Negative']
-
-            m,n = all_user_data.shape
-            # fit a linear regression
-            X=all_user_data[:,0].reshape(m,1)
-            y=all_user_data[:,1].reshape(m,1)
-            linear_reg.fit(X,y)
-            ROI_coef.append(linear_reg.coef_.flatten()[0])
-            # set the intercept to the origin
-            linear_reg.intercept_=0
-            m=max(np.absolute(np.min(X)),np.absolute(np.max(X)))
-            # plot regression line & perpendicular of regression
-            X=np.linspace(-m,+m)
-            X=X.reshape(X.shape[0],1)
-            plt.plot(X,linear_reg.predict(X),'k',label='linear fit')
-            linear_reg.coef_ = 1/(-linear_reg.coef_)
-            ROI_coef.append(linear_reg.coef_.flatten()[0])
-            ROI_coefs[roi] = ROI_coef
-            plt.plot(X,linear_reg.predict(X),'k',label='perpendicular fit')
-            # give the figures a symbol +1/-1
-            roi_output = np.concatenate((all_user_data,np.zeros((all_user_data.shape[0],1))),axis=1)
-            roi_output[roi_output[:,1]<roi_output[:,0]*linear_reg.coef_.flatten(),2]=-1
-            roi_output[roi_output[:,1]>roi_output[:,0]*linear_reg.coef_.flatten(),2]=+1
-            output[task].append(roi_output)
-            if plot_by_subject == False:
-                plt.scatter(roi_output[roi_output[:,2]==1,0],roi_output[roi_output[:,2]==1,1],label='Positive')
-                plt.scatter(roi_output[roi_output[:,2]==-1,0],roi_output[roi_output[:,2]==-1,1],label='Negative')
-                plt.legend(loc=4)
-            plt.show()
-    # returns RoIs - coefficients & negative inverse of coeff
-    for key in output.keys():
-        output[key] = np.array(output[key])
-    return output
