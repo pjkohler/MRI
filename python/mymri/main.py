@@ -1725,6 +1725,7 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
     xydata=real_imag_split(xydata)
     
     n = xydata.shape[0]
+    xydata = xydata.reshape(xydata.shape[0],-1)
     assert xydata.shape[1]==2, 'data should be of dimensions: N x 2, currently: {0}'.format(xydata.shape[1])
     assert len(xydata.shape) <= 2, "data should not have more than 2 dimensions"
 
@@ -2070,7 +2071,6 @@ def whole_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_typ
             print_wrap("{0} conditions, {1} ROIs and {2} subjects".format(len(subject_data.keys()),roi_str,sub_str),indent=1)
         
         assert all([ x == 2 for x in roi_n]), "expected exactly two rois (one per hemisphere)"
-        roi_names = info[task]['roi_names']
         
         harmonic_n = len(harmonic_list)
         for r in range(roi_n[t]):
