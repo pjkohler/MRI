@@ -92,14 +92,20 @@ def fft_offset(complex_in, offset_rad):
     phase = phase - offset_rad
     phase = ( phase + np.pi) % (2 * np.pi ) - np.pi
     # convert back to complex
-    complex_out = np.absolute(amp)*np.exp(1j*phase)
-    amp_out = np.mean(np.absolute(complex_out))
-    phase_out = np.mean(np.angle(complex_out))
+    complex_out = np.mean(np.absolute(amp)*np.exp(1j*phase),keepdims=True,axis=0)
+    amp_out = np.mean(np.absolute(complex_out),keepdims=True,axis=0)
+    phase_out = np.mean(np.angle(complex_out),keepdims=True,axis=0)
     return complex_out, amp_out, phase_out
 
 def real_imag_split(sig_complex):
     # takes complex data and splits into real and imaginary
-    sig_complex=np.concatenate((np.real(sig_complex),np.imag(sig_complex)),axis=1)
+    if len(sig_complex.shape) > 1: 
+        sig_complex = np.dstack((np.real(sig_complex),np.imag(sig_complex)))
+        # make real/imag second axis
+        sig_complex = np.transpose(sig_complex, (0,2,1) ) 
+    else:
+        sig_complex = sig_complex.reshape(sig_complex.shape[0],-1)
+        sig_complex = np.concatenate((np.real(sig_complex),np.imag(sig_complex)),axis=1)
     return sig_complex
 
 def flatten_1d(arr):
@@ -162,9 +168,9 @@ def create_file_dictionary(experiment_dir):
     
 # used by roi_surf_data
 class roiobject:
-    def __init__(self, curdata=np.zeros((120, 1)), curobject=None, is_time_series=True, roiname="unknown", tr=99, stimfreq=99, nharm=99, num_vox=0, offset=0):
-        if curobject is None:
-            self.data = []
+    def __init__(self, curdata=np.zeros((120,1)), curobject=None, is_time_series=True, roiname="unknown", tr=99, stimfreq=99, nharm=99, num_vox=0, offset=0):
+        if not curobject:
+            self.data = np.zeros((120,1))
             self.roi_name = roiname
             self.tr = tr
             self.stim_freq = stimfreq
@@ -183,15 +189,18 @@ class roiobject:
             self.is_time_series=curobject.is_time_series
             self.offset = curobject.offset
         if curdata.any():
-            self.data.append( curdata.reshape(curdata.shape[0],1) )
+            if self.data.any():
+                self.data = np.dstack((self.data,curdata))
+            else:
+                self.data = curdata    
             self.mean = self.average()
             if self.is_time_series == True:
                 self.fft = self.fourieranalysis()
     def average(self):
-        if len(self.data) is 0:
-            return []
+        if len(self.data.shape) < 3:
+            return self.data
         else:                
-            return np.mean(self.data,axis=0)  
+            return np.mean(self.data,axis=2,keepdims=False)  
     def fourieranalysis(self):
         return fft_analysis(self.average(),
             tr=self.tr,
@@ -201,10 +210,12 @@ class roiobject:
 
 # used by mrifft
 class fftobject:
-    def __init__(self):
-        for key in [ "spectrum", "frequencies", "mean_cycle", "sig_zscore", "sig_snr", 
-                    "sig_amp", "sig_phase", "sig_complex", "noise_complex", "noise_amp", "noise_phase" ]:
+    def __init__(self, **kwargs):
+        allowed_keys = [ "spectrum", "frequencies", "mean_cycle", "sig_z", "sig_snr", 
+                    "sig_amp", "sig_phase", "sig_complex", "noise_complex", "noise_amp", "noise_phase" ]
+        for key in allowed_keys:
             setattr(self, key, [])
+        self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
 
 # used by roi_group_analysis
 class groupobject:
@@ -1196,10 +1207,10 @@ def fft_analysis(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
               negative values means the first data frame was shifted backwards relative to stimulus
     """
     
-    output = fftobject()
-    if len(signal) == 0:
-        return output
-    nT = signal.size
+    nT = signal.shape[0]
+    nS = signal.shape[1]
+    assert nT < 1000, "unlikely number of TRs, time should be first dimension"
+    assert any([nT > 0, nS > 0]), "input must be two dimensional"
     sample_rate = 1/tr
     run_time = tr * nT
     
@@ -1207,70 +1218,71 @@ def fft_analysis(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     #            .format(file_name), shell=True)
     
     complex_vals = np.fft.rfft(signal,axis=0)
-    complex_vals = complex_vals.reshape(int(nT/2+1),1)
-    complex_vals = complex_vals[1:]/nT
+    complex_vals = np.divide(complex_vals[1:,:],nT)
     freq_vals = np.fft.rfftfreq(nT, d=1./sample_rate)
     freq_vals = freq_vals.reshape(int(nT/2+1),1)
     freq_vals = freq_vals[1:]
     
     # compute full spectrum
-    output.spectrum = np.abs(complex_vals)
-    output.frequencies = freq_vals
+    spectrum = np.abs(complex_vals)
+    frequencies = freq_vals
     
     # compute mean cycle
     cycle_len = nT/stimfreq
-    nu_signal = signal
     # this code should work whether offset is 0, negative or positive
     pre_add = int(offset % cycle_len)
     post_add = int(cycle_len-pre_add)
     # add "fake cycle" by adding nans to the beginning and end of time series
-    pre_nans = np.empty((1,pre_add,)).reshape(pre_add,1)
+    pre_nans = np.empty((pre_add,nS))
     pre_nans[:]=np.nan
-    nu_signal = np.insert(nu_signal, 0, pre_nans, axis=0)
-    post_nans = np.empty((1,post_add,)).reshape(post_add,1)
+    nu_signal = np.append(pre_nans,signal,axis=0)
+    post_nans = np.empty((post_add,nS))
     post_nans[:]=np.nan
-    nu_signal = np.append(nu_signal,post_nans)
+    nu_signal = np.append(nu_signal,post_nans,axis=0)
     # reshape, add one to stimfreq to account for fake cycle
-    nu_signal = nu_signal.reshape(int(stimfreq+1), int(nu_signal.shape[0] / (stimfreq+1)) )
+    nu_signal = nu_signal.reshape(int(nu_signal.shape[0] / (stimfreq+1)) ,int(stimfreq+1), nS)
     # nan-average to get mean cycle
-    mean_cycle = np.nanmean(nu_signal, axis = 0).reshape( int(signal.shape[0] / stimfreq),1)
+    mean_cycle = np.nanmean(nu_signal, axis = 1)
     # zero the mean_cycle    
-    mean_cycle = mean_cycle - np.mean(mean_cycle[0:2])
-    assert cycle_len == len(mean_cycle), "Mean cycle length {0} is different from computed cycle length {1}".format(len(mean_cycle),cycle_len)
-    output.mean_cycle = mean_cycle
-
-    for harm in range(1,nharm+1):
-        idx_list = freq_vals == (stimfreq * harm) / run_time
+    mean_cycle = mean_cycle - np.tile(np.mean(mean_cycle[0:2,:],axis=0,keepdims=True),(cycle_len, 1))
+    
+    sig_z = np.empty((nharm,nS))
+    sig_snr = np.empty((nharm,nS))
+    sig_complex = np.empty((nharm,nS),dtype=np.complex_)
+    sig_amp = np.empty((nharm,nS))
+    sig_phase = np.empty((nharm,nS))
+    noise_complex = np.empty((nharm,nS),dtype=np.complex_)
+    noise_amp = np.empty((nharm,nS))
+    noise_phase = np.empty((nharm,nS))
+    for h_idx in range(nharm):
+        idx_list = freq_vals == stimfreq * (h_idx+1) / run_time
 
         # Calculate Z-score
         # Compute the mean and std of the non-signal amplitudes.  Then compute the
         # z-score of the signal amplitude w.r.t these other terms.  This appears as
         # the Z-score in the plot.  This measures how many standard deviations the
         # observed amplitude differs from the distribution of other amplitudes.
-        sig_zscore = (output.spectrum[idx_list]-np.mean(output.spectrum[np.invert(idx_list)])) / np.std(output.spectrum[np.invert(idx_list)])
-        output.sig_zscore.append( sig_zscore )
+        sig_z[h_idx,:] = spectrum[idx_list[:,0],:].reshape(1,nS) - np.mean(spectrum[np.invert(idx_list[:,0]),:].reshape(-1,nS),axis=0, keepdims=True)
+        sig_z[h_idx,:] = np.divide(sig_z[h_idx,:], np.std(spectrum[np.invert(idx_list[:,0])].reshape(-1,nS),axis=0, keepdims=True) ) 
         
         # calculate Signal-to-Noise Ratio. 
         # Signal divided by mean of 4 side bands
-        signal_idx = int(np.where(idx_list)[0])
-        noise_idx = [signal_idx-2,signal_idx-1,signal_idx+1,signal_idx+2]
-        sig_snr = output.spectrum[signal_idx] / np.mean(output.spectrum[noise_idx])
-        output.sig_snr.append( sig_snr )
+        signal_idx = int(np.where(idx_list[:,0])[0])
+        noise_idx = [ signal_idx-2,signal_idx-1,signal_idx+1,signal_idx+2 ]
+        sig_snr[h_idx,:] = spectrum[signal_idx,:].reshape(1,nS) / np.mean(spectrum[noise_idx,:].reshape(-1,nS),axis=0, keepdims=True)
         
         # compute complex, amp and phase
         # compute offset in radians, as fraction of cycle length
         offset_rad = float(offset)/cycle_len*(2*np.pi)
         
-        sig_complex, sig_amp, sig_phase = fft_offset(complex_vals[signal_idx],offset_rad)
-        noise_complex, noise_amp, noise_phase = fft_offset(complex_vals[noise_idx],offset_rad)
-
-        output.sig_complex.append( sig_complex )
-        output.sig_amp.append( sig_amp )
-        output.sig_phase.append( sig_phase )
-        output.noise_complex.append( noise_complex )
-        output.noise_amp.append( noise_amp )
-        output.noise_phase.append( noise_phase )
-    return output   
+        sig_complex[h_idx,:], sig_amp[h_idx,:], sig_phase[h_idx,:] = fft_offset(complex_vals[signal_idx,:].reshape(1,nS),offset_rad)
+        noise_complex[h_idx,:], noise_amp[h_idx,:], noise_phase[h_idx,:] = fft_offset(complex_vals[noise_idx,:].reshape(-1,nS),offset_rad)
+    
+    return fftobject(
+            spectrum=spectrum,frequencies=frequencies,mean_cycle=mean_cycle,
+            sig_z=sig_z,sig_snr=sig_snr,sig_amp=sig_amp,sig_phase=sig_phase,sig_complex=sig_complex,
+            noise_amp=noise_amp,noise_phase=noise_phase,noise_complex=noise_complex)
+    
 
 def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pre_tr=2, do_scale=True,do_detrend=True, use_regressors='standard', offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"], do_scaling = True, report_timing=False):
     """
@@ -1283,7 +1295,7 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
             data in .gii format
     roi_type : string, default "wang"
             This defaults to "wang". Only acceptable inputs are
-            "wang", "benson", "wang+benson"
+            "wang", "benson", "wang+benson" and "whole_brain"
     is_time_series : boolean, default True
             Data contain time series. FourierT will be carried out
             if True
@@ -1322,16 +1334,6 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
     AssertError : Where surface vertices do not match
     """
     t = time.time()
-    #dictionary of RoIs
-    roi_dic={'wang': ["V1v", "V1d","V2v", "V2d", "V3v", "V3d", "hV4", "VO1", "VO2", "PHC1", "PHC2",
-                    "TO2", "TO1", "LO2", "LO1", "V3B", "V3A", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4",
-                    "IPS5", "SPL1", "FEF"],
-            'benson' : ["V1","V2","V3"],
-            'wang_newlabel' : ["V1v", "V1d", "V1","V2v", "V2d", "V2", "V3v", "V3d", "V3", "hV4", "VO1", "VO2", "PHC1", "PHC2",
-                    "TO2", "TO1", "LO2", "LO1", "V3B", "V3A", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4",
-                    "IPS5", "SPL1", "FEF"]
-            }
-    roi_type=roi_type.lower()
     if not sub:
         # determine subject from input data
         sub = surf_files[0][(surf_files[0].index('sub-')+4):(surf_files[0].index('sub-')+8)]
@@ -1354,125 +1356,133 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
             return None
         if s_2 not in surf_files:
             print_wrap("File {0} does not have a matching file from the other hemisphere".format(s),indent=1)
-            
-    l_files = sorted(l_files)
-    r_files = sorted(r_files)
-
-    # define roi files
-    if roi_type == "wang":
-        l_roifile = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fsdir,sub)
-        r_roifile = l_roifile.replace("lh","rh")
-        roilabel = roi_dic[roi_type]
-        newlabel = roi_dic[roi_type+'_newlabel']
-    elif roi_type == "benson":
-        l_roifile = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Benson2014.all.gii".format(fsdir,sub)
-        r_roifile = l_roifile.replace("lh","rh")
-        roilabel = roi_dic['benson']
-        newlabel = roilabel
-    elif roi_type == "wang+benson":
-        l_roifile = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fsdir,sub)
-        r_roifile = l_roifile.replace("lh","rh")
-        l_eccenfile = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Benson2014.all.gii".format(fsdir,sub)
-        r_eccenfile = l_eccenfile.replace("lh","rh")
-        # define roilabel based on ring centers
-        ring_incr = 0.25
-        ring_size = .5
-        ring_max = 6
-        ring_min = 1
-        ring_centers = np.arange(ring_min, ring_max, ring_incr) # list of ring extents
-        ring_extents = [(x-ring_size/2,x+ring_size/2) for x in ring_centers ]
-        roilabel = [ y+"_{:0.2f}".format(x) for y in roi_dic['benson'] for x in ring_centers ]
-        newlabel = roilabel
-    else:
-        if ".L." in l_roifile:
-            l_roifile = l_roifile
-            r_roifile = r_roifile.replace('.L.','.R.')
-        elif ".R." in r_roifile:
-            r_roifile = r_roifile
-            l_roifile =l_roifile.replace('.R.','.L.')
-        elif "lh" in l_roifile:
-            l_roifile = l_roifile
-            r_roifile = r_roifile.replace('lh','rh')
-        elif "rh" in r_roifile:
-            r_roifile = r_roifile
-            l_roifile = l_roifile.replace('rh','lh')
-        print("Unknown ROI labels, using numeric labels")
-        max_idx = int(max(nl_surf.load_surf_data(l_roifile))+1)
-        newlabel = ["roi_{:02.0f}".format(x) for x in range(1,max_idx)]
     
-    outnames = [x+"-L" for x in newlabel] + [x+"-R" for x in newlabel] + [x+"-BL" for x in newlabel]
+    data_files = [None,None]        
+    data_files[0] = sorted(l_files)
+    data_files[1] = sorted(r_files)
+    
+    roi_type=roi_type.lower()
+    if roi_type in ["whole","whole_brain","wholebrain"]:
+        roi_type = "whole"
+        outnames = ["whole-L","whole-R"]
+    else:
+        #dictionary of RoIs
+        roi_dic={'wang': ["V1v", "V1d","V2v", "V2d", "V3v", "V3d", "hV4", "VO1", "VO2", "PHC1", "PHC2",
+                        "TO2", "TO1", "LO2", "LO1", "V3B", "V3A", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4",
+                        "IPS5", "SPL1", "FEF"],
+                'benson' : ["V1","V2","V3"],
+                'wang_newlabel' : ["V1v", "V1d", "V1","V2v", "V2d", "V2", "V3v", "V3d", "V3", "hV4", "VO1", "VO2", "PHC1", "PHC2",
+                        "TO2", "TO1", "LO2", "LO1", "V3B", "V3A", "IPS0", "IPS1", "IPS2", "IPS3", "IPS4",
+                        "IPS5", "SPL1", "FEF"]
+                }
+        # define roi files
+        roi_file = [None,None]
+        if roi_type == "wang": 
+            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fsdir,sub)
+            roi_file[1] = roi_file[1].replace("lh","rh")
+            roilabel = roi_dic[roi_type]
+            newlabel = roi_dic[roi_type+'_newlabel']
+        elif roi_type == "benson":
+            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Benson2014.all.gii".format(fsdir,sub)
+            roi_file[1] = roi_file[0].replace("lh","rh")
+            roilabel = roi_dic['benson']
+            newlabel = roilabel
+        elif roi_type == "wang+benson":
+            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fsdir,sub)
+            roi_file[1] = roi_file[0].replace("lh","rh")
+            eccen_file = [None,None]
+            eccen_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Benson2014.all.gii".format(fsdir,sub)
+            eccen_file[1] = eccen_file[0].replace("lh","rh")
+            # define roilabel based on ring centers
+            ring_incr = 0.25
+            ring_size = .5
+            ring_max = 6
+            ring_min = 1
+            ring_centers = np.arange(ring_min, ring_max, ring_incr) # list of ring extents
+            ring_extents = [(x-ring_size/2,x+ring_size/2) for x in ring_centers ]
+            roilabel = [ y+"_{:0.2f}".format(x) for y in roi_dic['benson'] for x in ring_centers ]
+            newlabel = roilabel
+        else:
+            # NB: NOT CLEAR HOW THIS WOULD WORK?
+            if ".L." in roi_file[0]:
+                roi_file[0] = roi_file[0]
+                roi_file[1] = roi_file[1].replace('.L.','.R.')
+            elif ".R." in roi_file[1]:
+                roi_file[1] = roi_file[1]
+                roi_file[0] =roi_file[0].replace('.R.','.L.')
+            elif "lh" in roi_file[0]:
+                roi_file[0] = roi_file[0]
+                roi_file[1] = roi_file[1].replace('lh','rh')
+            elif "rh" in roi_file[1]:
+                roi_file[1] = roi_file[1]
+                roi_file[0] = roi_file[0].replace('rh','lh')
+            print("Unknown ROI labels, using numeric labels")
+            max_idx = int(max(nl_surf.load_surf_data(roi_file[0]))+1)
+            newlabel = ["roi_{:02.0f}".format(x) for x in range(1,max_idx)]
+        
+        outnames = [x+"-L" for x in newlabel] + [x+"-R" for x in newlabel] + [x+"-BL" for x in newlabel]
+    
     # create a list of outdata, with shared values 
     outdata = [ roiobject(is_time_series=is_time_series,roiname=name,tr=TR,nharm=5,stimfreq=10,offset=offset) for name in outnames ]
 
     print_wrap("subject {0}".format(sub),indent=1)
-
-    for hemi in ["L","R"]:
-        first_run = True; # used to determine whether or not to be verbose later on
-        if "L" in hemi:
-            if roi_type == "wang+benson":
-                print_wrap("applying {0}+{1} to {2} LH data files".format(l_roifile.split("/")[-1],l_eccenfile.split("/")[-1],len(l_files)),indent=2)
-            else:
-                print_wrap("applying {0} to {1} LH data files".format(l_roifile.split("/")[-1],len(l_files)),indent=2)
-            cur_roi = l_roifile
-            cur_files = l_files
+    
+    data_n = [None, None]
+    for h, hemi in enumerate(["L","R"]):
+        cur_files = data_files[h]
+        if roi_type == "whole":
+            hemi_data = []
+            print_wrap("doing whole brain analysis on {0} {1}H data files".format(len(cur_files),hemi),indent=2)
         else:
-            if roi_type == "wang+benson":    
-                print_wrap("applying {0}+{1} to {2} RH data files".format(r_roifile.split("/")[-1],r_eccenfile.split("/")[-1],len(r_files)),indent=2)
-            else:
-                print_wrap("applying {0} to {1} RH data files".format(r_roifile.split("/")[-1],len(r_files)),indent=2)
-            cur_roi = r_roifile
-            cur_files = r_files
-        try:
-            # uses surface module of nilearn to import data in .gii format
-            roi_data = nl_surf.load_surf_data(cur_roi)
-            # Benson should just use ROIs
-            if roi_type=='benson':
-                roi_data=roi_data[:,2]
-        except OSError:
-            print_wrap("ROI file: {0} could not be opened".format(cur_roi))
-        roi_n = roi_data.shape[0]
-        
-        if roi_type == "wang+benson":
-            if "L" in hemi:
-                cur_eccen = l_eccenfile
-            else:
-                cur_eccen = r_eccenfile
+            # roi-specific code begins here
+            cur_roi = roi_file[h]
             try:
-                eccen_data = nl_surf.load_surf_data(cur_eccen)
-                # select eccen data from Benson
-                eccen_data=eccen_data[:,1]
+                # uses surface module of nilearn to import data in .gii format
+                roi_data = nl_surf.load_surf_data(cur_roi)
+                # Benson should just use ROIs
+                if roi_type=='benson':
+                    roi_data=roi_data[:,2]
             except OSError:
-                print_wrap("Template eccen file: {0} could not be opened".format(cur_eccen))
-            eccen_n = eccen_data.shape[0]
-            assert eccen_n == roi_n, "ROIs and Template Eccen have different number of surface vertices"
-            ring_data = np.zeros_like(roi_data)
-            for r, evc in enumerate(roi_dic['benson']):
-                # find early visual cortex rois in wang rois
-                roi_set = set([i+1 for i, s in enumerate(roi_dic['wang']) if evc in s])
-                # Find index of each roi in roi_data
-                roi_index=np.array([])
-                for item in roi_set:
-                    roi_temp_index=np.array(np.where(roi_data==item)).flatten()
-                    roi_index=np.concatenate((roi_index,roi_temp_index))
-                roi_index=roi_index.astype(int)
-                # define indices based on ring extents
-                for e, extent in enumerate(ring_extents):
-                    #get indexes that are populated in both i.e. between lower and higher extent
-                    eccen_idx = np.where((eccen_data > extent[0]) * (eccen_data < extent[1]))[0]
-                    idx_val = e + (r*len(ring_centers))
-                    ready_idx = list(set(eccen_idx) & set(roi_index))
-                    ring_data[ready_idx] = idx_val+1
-            # now set ring values as new roi values
-            roi_data = ring_data
+                print_wrap("ROI file: {0} could not be opened".format(cur_roi))
+            roi_n = roi_data.shape[0]
+            # wang+benson-specific code begins here
+            if roi_type == "wang+benson":
+                cur_eccen = eccen_file[h]
+                try:
+                    eccen_data = nl_surf.load_surf_data(cur_eccen)
+                    # select eccen data from Benson
+                    eccen_data=eccen_data[:,1]
+                except OSError:
+                    print_wrap("Template eccen file: {0} could not be opened".format(cur_eccen))
+                eccen_n = eccen_data.shape[0]
+                assert eccen_n == roi_n, "ROIs and Template Eccen have different number of surface vertices"
+                ring_data = np.zeros_like(roi_data)
+                for r, evc in enumerate(roi_dic['benson']):
+                    # find early visual cortex rois in wang rois
+                    roi_set = set([i+1 for i, s in enumerate(roi_dic['wang']) if evc in s])
+                    # Find index of each roi in roi_data
+                    roi_index=np.array([])
+                    for item in roi_set:
+                        roi_temp_index=np.array(np.where(roi_data==item)).flatten()
+                        roi_index=np.concatenate((roi_index,roi_temp_index))
+                    roi_index=roi_index.astype(int)
+                    # define indices based on ring extents
+                    for e, extent in enumerate(ring_extents):
+                        #get indexes that are populated in both i.e. between lower and higher extent
+                        eccen_idx = np.where((eccen_data > extent[0]) * (eccen_data < extent[1]))[0]
+                        idx_val = e + (r*len(ring_centers))
+                        ready_idx = list(set(eccen_idx) & set(roi_index))
+                        ring_data[ready_idx] = idx_val+1
+                # now set ring values as new roi values
+                roi_data = ring_data
+                print_wrap("applying {0}+{1} to {2} {3}H data files".
+                           format(cur_roi.split("/")[-1],cur_eccen.split("/")[-1],len(cur_files),hemi),indent=2)
+            else:
+                print_wrap("applying {0} to {1} {2}H data files".format(cur_roi.split("/")[-1],len(cur_files),hemi),indent=2)
+            
         for run_file in cur_files:
             try:
                 cur_data = nl_surf.load_surf_data(run_file)
-                #gl.resetdefaults()
-                #gl.meshload(run_file)
-                
-                #img = nib.load(run_file)
-                #img_data = [x.data for x in img.darrays]
-                #cur_data = np.reshape(img_data,(len(img_data[0]),len(img_data)))
             except:
                 print_wrap("Data file: {0} could not be opened".format(run_file))
                 
@@ -1534,8 +1544,7 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
                         if sum(df[col].isnull()) > 0:
                             # replacing nan values of each column with its average
                             df[col] = df[col].fillna(np.mean(df[col]))
-                    if first_run:
-                        first_run = False;
+                    if run_file == cur_files[0]:
                         print_wrap("using {0} confound regressors".format(len(df.columns)),indent=3)
                     
                     new_data = nl_signal.clean(cur_data, detrend=True, standardize=False, confounds=df.as_matrix(), low_pass=None, high_pass=None, t_r=TR, ensure_finite=False)
@@ -1543,44 +1552,55 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
                 except:
                     print_wrap("Data file: {0}, detrending failure".format(run_file.split('/')[-1]))
             
-            data_n = cur_data.shape[0]
-            assert data_n == roi_n, "Data and ROI have different number of surface vertices"
-            for roi_name in newlabel:
-                # note,  account for one-indexing of ROIs
-                roi_set = set([i+1 for i, s in enumerate(roilabel) if roi_name in s])
-                # Find index of each roi in roi_data
-                roi_index=np.array([])
-                for item in roi_set:
-                    roi_temp_index=np.array(np.where(roi_data==item)).flatten()
-                    roi_index=np.concatenate((roi_index,roi_temp_index))
-                roi_index=roi_index.astype(int)
-                num_vox = len(roi_index)
-                if num_vox == 0:
-                    print_wrap(roi_name+"-"+hemi+" "+str(roi_set))
-                roi_t = np.mean(cur_data[roi_index],axis=0)
-                out_idx = outnames.index(roi_name+"-"+hemi)
-                outdata[out_idx].num_vox = num_vox
-                outdata[out_idx] = roiobject(roi_t, curobject=outdata[out_idx])
-                
-                if "R" in hemi and run_file == cur_files[-1]:
-                    # do bilateral
-                    other_idx = outnames.index(roi_name+"-"+"L")
-                    bl_idx = outnames.index(roi_name+"-"+"BL")
-                    bl_data = [ (x + y)/2 for x, y in zip(outdata[other_idx].data, outdata[out_idx].data) ]
-                    num_vox = np.add(outdata[other_idx].num_vox, outdata[out_idx].num_vox)
-                    outdata[bl_idx].num_vox = num_vox
-                    for bl_run in bl_data:
-                        outdata[bl_idx] = roiobject(bl_run, outdata[bl_idx])
+            if data_n[h]:
+                assert data_n[h] == cur_data.shape[0], "two runs from {0}H have different number of surface vertices".format(hemi)
+            else:
+                data_n[h] = cur_data.shape[0]           
+            
+            if roi_type == "whole":
+                hemi_data.append(cur_data)
+                if run_file == cur_files[-1]:
+                    out_idx = outnames.index("whole-"+hemi)
+                    hemi_data = np.mean(hemi_data,axis=0)
+                    outdata[out_idx] = roiobject(np.transpose(hemi_data), curobject=outdata[out_idx])                    
+            else:
+                assert data_n[h] == roi_n, "Data and ROI have different number of surface vertices"
+                for roi_name in newlabel:
+                    # note,  account for one-indexing of ROIs
+                    roi_set = set([i+1 for i, s in enumerate(roilabel) if roi_name in s])
+                    # Find index of each roi in roi_data
+                    roi_index=np.array([])
+                    for item in roi_set:
+                        roi_temp_index=np.array(np.where(roi_data==item)).flatten()
+                        roi_index=np.concatenate((roi_index,roi_temp_index))
+                    roi_index=roi_index.astype(int)
+                    num_vox = len(roi_index)
+                    if num_vox == 0:
+                        print_wrap(roi_name+"-"+hemi+" "+str(roi_set))
+                    roi_t = np.mean(cur_data[roi_index],axis=0,keepdims=True)
+                    out_idx = outnames.index(roi_name+"-"+hemi)
+                    outdata[out_idx].num_vox = num_vox
+                    outdata[out_idx] = roiobject(np.transpose(roi_t), curobject=outdata[out_idx])
+                    
+                    if "R" in hemi and run_file == cur_files[-1]:
+                        # do bilateral
+                        other_idx = outnames.index(roi_name+"-"+"L")
+                        bl_idx = outnames.index(roi_name+"-"+"BL")
+                        bl_data = np.divide(outdata[other_idx].data + outdata[out_idx].data ,2)
+                        num_vox = np.add(outdata[other_idx].num_vox, outdata[out_idx].num_vox)
+                        outdata[bl_idx].num_vox = num_vox
+                        outdata[bl_idx] = roiobject(bl_data, outdata[bl_idx])
     if report_timing:
         elapsed = time.time() - t
         print_wrap("ROI Surf Data run complete, took {0} seconds".format(elapsed))
     return (outdata, outnames)
 
 def hotelling_t2(in_vals, alpha=0.05,test_mu=np.zeros((1,1), dtype=np.complex), test_type="Hot"):
-    assert np.all(np.iscomplex(in_vals)), "input variable is not complex"
+    assert np.iscomplexobj(in_vals), "all values must be complex"
     assert (alpha > 0.0) & (alpha < 1.0), "alpha must be between 0 and 1"
 
     # compare against zero?
+    in_vals = in_vals.reshape(in_vals.shape[0],-1)
     if in_vals.shape[1] == 1:
         in_vals = np.append(in_vals,np.zeros(in_vals.shape, dtype=np.complex),axis=1)
         num_cond = 1
@@ -1680,12 +1700,14 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
         vector
     return_rad : Boolean, default False
         Specifies whether to return values
-        in radians or degrees.
+        in radians or degrees.t
     Returns
     ------------
+    amp_mean
     amp_diff : numpy array,
             differences of lower and upper bound
             for the mean amplitude
+    phase_mean :
     phase_diff : numpy array,
             differences of lower and upper bound
             for the mean phase
@@ -1694,21 +1716,18 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
     error_ellipse : numpy array,
             Array of error ellipses
     """
-    xydata=np.array(xydata)
     
     # convert return_rad to an integer for indexing purposes later
     return_rad = int(return_rad)
 
-    if len(xydata[np.iscomplex(xydata)])==len(xydata):
+    assert np.iscomplexobj(xydata), "all values must be complex"
+
+    xydata=real_imag_split(xydata)
     
-        xydata=real_imag_split(xydata)
-    else:
-        check=input('Data not complex. Should run continue? True/False')
-        if check == False:
-            print('Run stopped')
-            return None
     n = xydata.shape[0]
     assert xydata.shape[1]==2, 'data should be of dimensions: N x 2, currently: {0}'.format(xydata.shape[1])
+    assert len(xydata.shape) <= 2, "data should not have more than 2 dimensions"
+
     try:
         (mean_xy, sampCovMat, smaller_eigenvec, 
            smaller_eigenval,larger_eigenvec, 
@@ -2001,15 +2020,99 @@ def roi_subjects(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All', pr
         elapsed = time.time() - t
         print_wrap("SubjectAnalysis complete, took {0} seconds".format(elapsed))
 
-def roi_group(subject_data, outnames, harmonic_list=['1'],output='all',ellipse_type='SEM', make_plot=False, return_rad=True):
+def whole_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_type='SEM', make_plot=False, return_rad=True):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
     ------------
     subject_data : numpy array
         create this input using combineHarmonics()
         array dimensions: (roi_number, harmonic_number, subject_number)
-    outnames : list of strings
-        list of all RoIs
+    info : dict returned by roi_subject, 
+        used only to get ROI names
+    output : string or list or strs, default 'all'
+        Can specify what output you would like.
+        These are phase difference, amp difference and zSNR
+        Options: 'all', 'phase', 'amp', 'zSNR',['phase','amp'] etc
+    ellipse_type : string, default 'SEM'
+        ellipse type SEM or in format: 'x%CI'
+    make_plot : boolean, default False
+        If True, will produce a plot for each RoI
+    return_rad : boolean, default False
+        Specify to return values in radians or degrees
+    
+    Returns
+    ------------
+    group_dictionary : dictionary
+        broken down by task to include:
+            ampPhaseZSNR_df : pd.DataFrame,
+                contains RoIs as index, amp difference lower/upper, 
+                phase difference lower/upper, zSNR
+            error_ellipse_dic : dictionary,
+                contains a dictionary of numpy arrays of the 
+                error ellipses broken down by RoI.
+    """ 
+    start_time = time.time()
+    print_wrap("Running group whole-brain analysis ...")
+    group_dictionary = {}
+    for t,task in enumerate(subject_data.keys()):
+        # dictionary for output of error Ellipse
+        #ellipse_dic={}
+        # number of rois, harmonics, subjects
+        # subjects_n, roi_n = subject_data[task].shape
+        # to be used to create the final columns in the dataframe
+        #harmonic_name_list = ['RoIs']
+        # Loop through harmonics & rois
+        if t == 0:
+            subjects_n = [x[0] for x in [subject_data[x].shape for x in subject_data.keys()] ]
+            sub_str = ', '.join(str(x) for x in subjects_n)
+            roi_n = [x[1] for x in [subject_data[x].shape for x in subject_data.keys()] ]
+            roi_str = ', '.join(str(x) for x in roi_n);
+            print_wrap("{0} conditions, {1} ROIs and {2} subjects".format(len(subject_data.keys()),roi_str,sub_str),indent=1)
+        
+        assert all([ x == 2 for x in roi_n]), "expected exactly two rois (one per hemisphere)"
+        roi_names = info[task]['roi_names']
+        
+        harmonic_n = len(harmonic_list)
+        for r in range(roi_n[t]):
+            
+            for h in range(harmonic_n):
+                # current harmonic 
+                cur_harm = int(harmonic_list[h])
+                xydata = [data.fft.sig_complex[cur_harm-1] for data in subject_data[task][:,r]]
+                xydata = np.array(xydata,ndmin=2)
+                if h == 0 and r == 0:
+                    # four values per harmonic: amp, phase, t2 and p-value
+                    group_out = np.empty((xydata.shape[1],harmonic_n*4,roi_n[t]))
+                # compute elliptical errors
+                split_data = real_imag_split(xydata)
+                
+                real_data = np.mean(split_data[:,0,:],axis=0,keepdims=True)
+                imag_data = np.mean(split_data[:,1,:],axis=0,keepdims=True)
+                
+                group_out[:,h*4,r] = np.abs(real_data + 1j * imag_data)
+                group_out[:,h*4+1,r] = np.angle(real_data + 1j * imag_data)
+                
+                # compute Hotelling's T-squared:
+                cur_hot = [ hotelling_t2(xydata[:,x]) for x in range(xydata.shape[1]) ]
+                # t2 value
+                group_out[:,h*4+2,r] = [ x[0] for x in cur_hot ]
+                # p-value
+                group_out[:,h*4+3,r] = [ x[1] for x in cur_hot ]
+           
+        group_dictionary[task] = group_out
+        elapsed = time.time() - start_time
+    print_wrap("Group analysis complete, took {0} seconds".format(int(elapsed)))
+    return group_dictionary
+
+def roi_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_type='SEM', make_plot=False, return_rad=True):
+    """ Perform group analysis on subject data output from RoiSurfData.
+    Parameters
+    ------------
+    subject_data : numpy array
+        create this input using combineHarmonics()
+        array dimensions: (roi_number, harmonic_number, subject_number)
+    info : dict returned by roi_subject, 
+        used only to get ROI names
     output : string or list or strs, default 'all'
         Can specify what output you would like.
         These are phase difference, amp difference and zSNR
@@ -2050,20 +2153,22 @@ def roi_group(subject_data, outnames, harmonic_list=['1'],output='all',ellipse_t
             roi_str = ', '.join(str(x) for x in roi_n);
             print_wrap("{0} conditions, {1} ROIs and {2} subjects".format(len(subject_data.keys()),roi_str,sub_str),indent=1)
         
+        roi_names = info[task]['roi_names']
+        
         harmonic_n = len(harmonic_list)
         for r in range(roi_n[t]):
             for h in range(harmonic_n):
                 # current harmonic 
                 cur_harm = int(harmonic_list[h])
-                #ee_name = '{0}_harmonic_{1}'.format(outnames[r],cur_harm)
+                #ee_name = '{0}_harmonic_{1}'.format(roi_names[r],cur_harm)
                 xydata = [data.fft.sig_complex[cur_harm-1] for data in subject_data[task][:,r]]
                 xydata = np.array(xydata,ndmin=2)
                 
                 # compute elliptical errors
                 amp_mean, amp_diff, phase_mean, phase_diff, zSNR, error_ellipse = fit_error_ellipse(xydata,ellipse_type,make_plot,return_rad)
                 
-                assert amp_diff[0,0] >= 0, "warning: ROI {0} with task {1}: lower error bar is smaller than zero".format(outnames[r],task)  
-                assert amp_diff[0,1] >= 0, "warning: ROI {0} with task {1}: upper error bar is smaller than zero".format(outnames[r],task)     
+                assert amp_diff[0,0] >= 0, "warning: ROI {0} with task {1}: lower error bar is smaller than zero".format(roi_names[r],task)  
+                assert amp_diff[0,1] >= 0, "warning: ROI {0} with task {1}: upper error bar is smaller than zero".format(roi_names[r],task)     
                 
                 # compute Hotelling's T-squared:
                 hot_tval, hot_pval, hot_crit = hotelling_t2(xydata)
@@ -2088,7 +2193,7 @@ def roi_group(subject_data, outnames, harmonic_list=['1'],output='all',ellipse_t
             cur_cycle = np.concatenate((cur_cycle_ave,cur_cycle_stderr))
             
             # construct the group ROI object            
-            cur_obj = groupobject(amp=cur_amp,phase=cur_phase,zSNR=cur_snr, hotT2=cur_hotT2, cycle=cur_cycle,harmonics=harmonic_list,roi_name=outnames[r])
+            cur_obj = groupobject(amp=cur_amp,phase=cur_phase,zSNR=cur_snr, hotT2=cur_hotT2, cycle=cur_cycle,harmonics=harmonic_list,roi_name=roi_names[r])
             if r == 0:
                 group_out = np.array(cur_obj,ndmin=1)
             else:
