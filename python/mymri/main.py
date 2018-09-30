@@ -1379,7 +1379,7 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
         roi_file = [None,None]
         if roi_type == "wang": 
             roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fsdir,sub)
-            roi_file[1] = roi_file[1].replace("lh","rh")
+            roi_file[1] = roi_file[0].replace("lh","rh")
             roilabel = roi_dic[roi_type]
             newlabel = roi_dic[roi_type+'_newlabel']
         elif roi_type == "benson":
@@ -1406,16 +1406,16 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
             # NB: NOT CLEAR HOW THIS WOULD WORK?
             if ".L." in roi_file[0]:
                 roi_file[0] = roi_file[0]
-                roi_file[1] = roi_file[1].replace('.L.','.R.')
+                roi_file[1] = roi_file[0].replace('.L.','.R.')
             elif ".R." in roi_file[1]:
                 roi_file[1] = roi_file[1]
-                roi_file[0] =roi_file[0].replace('.R.','.L.')
+                roi_file[0] =roi_file[1].replace('.R.','.L.')
             elif "lh" in roi_file[0]:
                 roi_file[0] = roi_file[0]
-                roi_file[1] = roi_file[1].replace('lh','rh')
+                roi_file[1] = roi_file[0].replace('lh','rh')
             elif "rh" in roi_file[1]:
                 roi_file[1] = roi_file[1]
-                roi_file[0] = roi_file[0].replace('rh','lh')
+                roi_file[0] = roi_file[1].replace('rh','lh')
             print("Unknown ROI labels, using numeric labels")
             max_idx = int(max(nl_surf.load_surf_data(roi_file[0]))+1)
             newlabel = ["roi_{:02.0f}".format(x) for x in range(1,max_idx)]
