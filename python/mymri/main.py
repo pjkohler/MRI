@@ -1240,11 +1240,15 @@ def fft_analysis(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     post_nans[:]=np.nan
     nu_signal = np.append(nu_signal,post_nans,axis=0)
     # reshape, add one to stimfreq to account for fake cycle
-    nu_signal = nu_signal.reshape(int(nu_signal.shape[0] / (stimfreq+1)) ,int(stimfreq+1), nS)
+    nu_signal = nu_signal.reshape(int(stimfreq+1), int(nu_signal.shape[0] / (stimfreq+1)), nS)
     # nan-average to get mean cycle
-    mean_cycle = np.nanmean(nu_signal, axis = 1)
+    mean_cycle = np.nanmean(nu_signal, axis = 0)
     # zero the mean_cycle    
     mean_cycle = mean_cycle - np.tile(np.mean(mean_cycle[0:2,:],axis=0,keepdims=True),(cycle_len, 1))
+    
+    if np.isnan(mean_cycle).any() == True:
+        print("mean cycle should not contain NaNs" )
+    assert np.isnan(mean_cycle).	any() == False, "mean cycle should not contain NaNs" 
     
     sig_z = np.empty((nharm,nS))
     sig_snr = np.empty((nharm,nS))
@@ -1800,14 +1804,14 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
     # convert to degrees (if necessary) & find diff between (max bound & mean phase) & (mean phase & min bound)
     # everything converted from [-pi, pi] to [0, 2*pi] for unambiguous calculation
     convFactor = np.array([180 / np.pi,1])
-    unwrapFactor = np.array([360, 2 * np.pi])
+    unwrap_factor = np.array([360, 2 * np.pi])
     phaseEllipseExtremes = anglesOI*convFactor[return_rad]
-    phaseEllipseExtremes[phaseEllipseExtremes < 0 ] = phaseEllipseExtremes[phaseEllipseExtremes < 0] + unwrapFactor[return_rad]
+    phaseEllipseExtremes[phaseEllipseExtremes < 0 ] = phaseEllipseExtremes[phaseEllipseExtremes < 0] + unwrap_factor[return_rad]
     
     phaseBounds = np.array([min(phaseEllipseExtremes),max(phaseEllipseExtremes)])
     phase_mean = np.arctan2(mean_xy[1],mean_xy[0]) * convFactor[return_rad]
     if phase_mean < 0:
-        phase_mean = phase_mean + unwrapFactor[return_rad]
+        phase_mean = phase_mean + unwrap_factor[return_rad]
     
     # if ellipse overlaps with origin, defined by whether phase angles in all 4 quadrants
     phaseAngles[phaseAngles < 0] = phaseAngles[phaseAngles < 0] + 2*np.pi
@@ -1827,7 +1831,7 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
     
     # unwrap phase diff for any ellipse that overlaps with positive x axis
     
-    phase_diff[phase_diff > unwrapFactor[return_rad] / 2] = unwrapFactor[return_rad] - phase_diff[phase_diff > unwrapFactor[return_rad]/2]
+    phase_diff[phase_diff > unwrap_factor[return_rad] / 2] = unwrap_factor[return_rad] - phase_diff[phase_diff > unwrap_factor[return_rad]/2]
     amp_diff = np.array([amp_mean - amp_bounds[0], amp_bounds[1] - amp_mean],ndmin=2)
 
     zSNR = amp_mean / np.mean(np.array([amp_mean - amp_bounds[0], amp_bounds[1] - amp_mean]))
@@ -2055,6 +2059,7 @@ def whole_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_typ
     start_time = time.time()
     print_wrap("Running group whole-brain analysis ...")
     group_dictionary = {}
+    unwrap_factor = np.array([360, 2 * np.pi])
     for t,task in enumerate(subject_data.keys()):
         # dictionary for output of error Ellipse
         #ellipse_dic={}
@@ -2090,7 +2095,10 @@ def whole_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_typ
                 imag_data = np.mean(split_data[:,1,:],axis=0,keepdims=True)
                 
                 group_out[:,h*4,r] = np.abs(real_data + 1j * imag_data)
-                group_out[:,h*4+1,r] = np.angle(real_data + 1j * imag_data)
+                phase_mean = np.angle(real_data + 1j * imag_data,return_rad)
+                # unwrap negative phases   
+                phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + umwrap_factor[return_rad]
+                phase_mean = group_out[:,h*4+1,r]
                 
                 # compute Hotelling's T-squared:
                 cur_hot = [ hotelling_t2(xydata[:,x]) for x in range(xydata.shape[1]) ]
@@ -2189,7 +2197,7 @@ def roi_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_type=
             temp_cycle = np.squeeze(np.asarray(temp_cycle))
             cur_cycle_ave = np.array(np.mean(temp_cycle,axis=0),ndmin=2)
             sub_count = np.count_nonzero(~np.isnan(temp_cycle),axis=0)            
-            cur_cycle_stderr = np.array(np.divide(np.nanstd(temp_cycle,axis=0),sub_count),ndmin=2)
+            cur_cycle_stderr = np.array(np.divide(np.nanstd(temp_cycle,axis=0),np.sqrt(sub_count)),ndmin=2)
             cur_cycle = np.concatenate((cur_cycle_ave,cur_cycle_stderr))
             
             # construct the group ROI object            
