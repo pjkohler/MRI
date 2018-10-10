@@ -1228,7 +1228,7 @@ def fft_analysis(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     frequencies = freq_vals
     
     # compute mean cycle
-    cycle_len = nT/stimfreq
+    cycle_len = int(nT/stimfreq)
     # this code should work whether offset is 0, negative or positive
     pre_add = int(offset % cycle_len)
     post_add = int(cycle_len-pre_add)
@@ -1243,8 +1243,8 @@ def fft_analysis(signal,tr=2.0,stimfreq=10,nharm=5,offset=0):
     nu_signal = nu_signal.reshape(int(stimfreq+1), int(nu_signal.shape[0] / (stimfreq+1)), nS)
     # nan-average to get mean cycle
     mean_cycle = np.nanmean(nu_signal, axis = 0)
-    # zero the mean_cycle    
-    mean_cycle = mean_cycle - np.tile(np.mean(mean_cycle[0:2,:],axis=0,keepdims=True),(cycle_len, 1))
+    # subtract the mean to zero the mean_cycle
+    mean_cycle = mean_cycle - np.tile(np.mean(mean_cycle,axis=0,keepdims=True),(cycle_len, 1))
     
     if np.isnan(mean_cycle).any() == True:
         print("mean cycle should not contain NaNs" )
@@ -1535,7 +1535,7 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
                     # drop pre_trs
                     df = df[pre_tr:]
                     
-                    df_trs = df.as_matrix().shape[0]
+                    df_trs = df.values.shape[0]
                     assert (df_trs == cur_data.shape[0])
 
                     # select columns to use as nuisance regressors
@@ -1551,7 +1551,7 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
                     if run_file == cur_files[0]:
                         print_wrap("using {0} confound regressors".format(len(df.columns)),indent=3)
                     
-                    new_data = nl_signal.clean(cur_data, detrend=True, standardize=False, confounds=df.as_matrix(), low_pass=None, high_pass=None, t_r=TR, ensure_finite=False)
+                    new_data = nl_signal.clean(cur_data, detrend=True, standardize=False, confounds=df.values, low_pass=None, high_pass=None, t_r=TR, ensure_finite=False)
                     cur_data = np.transpose(new_data)
                 except:
                     print_wrap("Data file: {0}, detrending failure".format(run_file.split('/')[-1]))
@@ -1968,7 +1968,7 @@ def roi_subjects(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All', pr
     t = time.time()
     if subjects == 'All':
         subjects = [files for files in os.listdir(exp_folder) if 'sub' in files and 'html' not in files]
-    data_dic={}; info_dic={}
+    out_dic={}
     if tasks==None:
         print_wrap("Running SubjectAnalysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,offset))
         for sub_int, sub in enumerate(subjects):
@@ -1983,8 +1983,7 @@ def roi_subjects(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All', pr
             else:
                 outdata_arr = np.concatenate((outdata_arr,np.array(outdata,ndmin=2)),axis=0)
                 assert roinames == curnames, "roi names do not match across subjects"
-        data_dic['no_task'] = outdata_arr
-        info_dic['no_task'] = {"pre_tr": pre_tr, "offset": offset, "roi_names": roinames, "file_type": file_type}
+        out_dic['no_task'] = {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roinames,"file_type": file_type}
     else:
         if type(tasks) is not dict:    
             if type(tasks) is str:
@@ -2018,9 +2017,8 @@ def roi_subjects(exp_folder,fsdir=os.environ["SUBJECTS_DIR"],subjects ='All', pr
                     else:
                         outdata_arr = np.concatenate((outdata_arr,np.array(outdata,ndmin=2)),axis=0)
                         assert roinames == curnames, "roi names do not match across subjects"
-            data_dic[task] = outdata_arr
-            info_dic[task] = {"pre_tr": pre_tr, "offset": offset, "roi_names": roinames, "file_type": file_type}
-    return data_dic, info_dic
+            out_dic[task] =  {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roinames, "file_type": file_type}
+    return out_dic
     if report_timing:
         elapsed = time.time() - t
         print_wrap("SubjectAnalysis complete, took {0} seconds".format(elapsed))
@@ -2097,7 +2095,7 @@ def whole_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_typ
                 group_out[:,h*4,r] = np.abs(real_data + 1j * imag_data)
                 phase_mean = np.angle(real_data + 1j * imag_data,return_rad)
                 # unwrap negative phases   
-                phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + umwrap_factor[return_rad]
+                phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + unwrap_factor[return_rad]
                 phase_mean = group_out[:,h*4+1,r]
                 
                 # compute Hotelling's T-squared:
@@ -2112,15 +2110,13 @@ def whole_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_typ
     print_wrap("Group analysis complete, took {0} seconds".format(int(elapsed)))
     return group_dictionary
 
-def roi_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_type='SEM', make_plot=False, return_rad=True):
+def roi_group(subject_data, harmonic_list=['1'],output='all',ellipse_type='SEM', make_plot=False, return_rad=True):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
     ------------
     subject_data : numpy array
         create this input using combineHarmonics()
         array dimensions: (roi_number, harmonic_number, subject_number)
-    info : dict returned by roi_subject, 
-        used only to get ROI names
     output : string or list or strs, default 'all'
         Can specify what output you would like.
         These are phase difference, amp difference and zSNR
@@ -2155,13 +2151,13 @@ def roi_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_type=
         #harmonic_name_list = ['RoIs']
         # Loop through harmonics & rois
         if t == 0:
-            subjects_n = [x[0] for x in [subject_data[x].shape for x in subject_data.keys()] ]
+            subjects_n = [x[0] for x in [subject_data[x]["data"].shape for x in subject_data.keys()] ]
             sub_str = ', '.join(str(x) for x in subjects_n)
-            roi_n = [x[1] for x in [subject_data[x].shape for x in subject_data.keys()] ]
+            roi_n = [x[1] for x in [subject_data[x]["data"].shape for x in subject_data.keys()] ]
             roi_str = ', '.join(str(x) for x in roi_n);
             print_wrap("{0} conditions, {1} ROIs and {2} subjects".format(len(subject_data.keys()),roi_str,sub_str),indent=1)
         
-        roi_names = info[task]['roi_names']
+        roi_names = subject_data[task]["roi_names"]
         
         harmonic_n = len(harmonic_list)
         for r in range(roi_n[t]):
@@ -2169,7 +2165,7 @@ def roi_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_type=
                 # current harmonic 
                 cur_harm = int(harmonic_list[h])
                 #ee_name = '{0}_harmonic_{1}'.format(roi_names[r],cur_harm)
-                xydata = [data.fft.sig_complex[cur_harm-1] for data in subject_data[task][:,r]]
+                xydata = [data.fft.sig_complex[cur_harm-1] for data in subject_data[task]["data"][:,r]]
                 xydata = np.array(xydata,ndmin=2)
                 
                 # compute elliptical errors
@@ -2193,7 +2189,7 @@ def roi_group(subject_data, info, harmonic_list=['1'],output='all',ellipse_type=
                     cur_hotT2 = np.concatenate((cur_hotT2, np.concatenate((np.array(hot_tval,ndmin=2),np.array(hot_pval,ndmin=2)),axis=1)),axis=2);
                 
             # compute cycle average and standard error
-            temp_cycle = [data.fft.mean_cycle for data in subject_data[task][:,r]]
+            temp_cycle = [data.fft.mean_cycle for data in subject_data[task]["data"][:,r]]
             temp_cycle = np.squeeze(np.asarray(temp_cycle))
             cur_cycle_ave = np.array(np.mean(temp_cycle,axis=0),ndmin=2)
             sub_count = np.count_nonzero(~np.isnan(temp_cycle),axis=0)            
