@@ -264,7 +264,7 @@ class groupobject:
 
 ## MAIN FUNCTIONS
 
-def write(data, path):
+def write(path, data):
     with open(path, 'wb') as f:
         pickle.dump(data, f, -1)
 
@@ -2187,7 +2187,7 @@ def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', p
         print_wrap("SubjectAnalysis complete, took {0} seconds".format(elapsed))
 
 
-def whole_group(subject_data, info, harmonic_list=['1'], output='all', ellipse_type='SEM', make_plot=False,
+def whole_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM', make_plot=False,
                 return_rad=True):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
@@ -2195,8 +2195,6 @@ def whole_group(subject_data, info, harmonic_list=['1'], output='all', ellipse_t
     subject_data : numpy array
         create this input using combineHarmonics()
         array dimensions: (roi_number, harmonic_number, subject_number)
-    info : dict returned by roi_subject, 
-        used only to get ROI names
     output : string or list or strs, default 'all'
         Can specify what output you would like.
         These are phase difference, amp difference and zSNR
@@ -2232,10 +2230,10 @@ def whole_group(subject_data, info, harmonic_list=['1'], output='all', ellipse_t
         # harmonic_name_list = ['RoIs']
         # Loop through harmonics & rois
         if t == 0:
-            subjects_n = [x[0] for x in [subject_data[x].shape for x in subject_data.keys()]]
+            subjects_n = [x[0] for x in [subject_data[x]["data"].shape for x in subject_data.keys()]]
             sub_str = ', '.join(str(x) for x in subjects_n)
-            roi_n = [x[1] for x in [subject_data[x].shape for x in subject_data.keys()]]
-            roi_str = ', '.join(str(x) for x in roi_n);
+            roi_n = [x[1] for x in [subject_data[x]["data"].shape for x in subject_data.keys()]]
+            roi_str = ', '.join(str(x) for x in roi_n)
             print_wrap("{0} conditions, {1} ROIs and {2} subjects".format(len(subject_data.keys()), roi_str, sub_str),
                        indent=1)
 
@@ -2247,7 +2245,7 @@ def whole_group(subject_data, info, harmonic_list=['1'], output='all', ellipse_t
             for h in range(harmonic_n):
                 # current harmonic 
                 cur_harm = int(harmonic_list[h])
-                xydata = [data.fft.sig_complex[cur_harm - 1] for data in subject_data[task][:, r]]
+                xydata = [data.fft.sig_complex[cur_harm - 1] for data in subject_data[task]["data"][:, r]]
                 xydata = np.array(xydata, ndmin=2)
                 if h == 0 and r == 0:
                     # four values per harmonic: amp, phase, t2 and p-value
@@ -2261,8 +2259,8 @@ def whole_group(subject_data, info, harmonic_list=['1'], output='all', ellipse_t
                 group_out[:, h * 4, r] = np.abs(real_data + 1j * imag_data)
                 phase_mean = np.angle(real_data + 1j * imag_data, return_rad)
                 # unwrap negative phases   
-                phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + unwrap_factor[return_rad]
-                phase_mean = group_out[:, h * 4 + 1, r]
+                phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + unwrap_factor[int(return_rad)]
+                group_out[:, h * 4 + 1, r] = phase_mean
 
                 # compute Hotelling's T-squared:
                 cur_hot = [hotelling_t2(xydata[:, x]) for x in range(xydata.shape[1])]
