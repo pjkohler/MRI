@@ -712,7 +712,7 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
                           .format(specprefix, subject, suffix, hemi, vol_file, file_name, map_func, index, wm_mod,
                                   gm_mod, steps, maskcode, tmp_dir, output_file_name), do_print=False)
                 # Removes output gii file if it exists
-                out_path = "{0}/{1}_{2}.gii".format(cur_dir, output_file_name)
+                out_path = "{0}/{1}.gii".format(cur_dir, output_file_name)
                 if os.path.isfile(out_path):
                     os.remove(out_path)
                 # Converts the .niml.dset into a .gii file in the functional directory
