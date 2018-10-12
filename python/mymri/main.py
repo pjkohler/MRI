@@ -533,7 +533,7 @@ def pre_scale(in_files, no_dt=False, keep_temp=False):
 
 def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, sessions=None, map_func='ave',
                 wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10, mask=None, surf_vol='standard',
-                std141=False, keep_temp=False):
+                blur_size = 0, delete_unsmoothed = False, std141=False, keep_temp=False):
     """
     Function for converting from volume to surface space.  
     Supports suma surfaces both in native and std141 space.
@@ -588,6 +588,10 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
         File location of volume directory/file
     std141 : Boolean, default False
         Is subject to be run with standard 141?
+    blur_size : Int, default 0
+        if blur_size > 0, smoothing will be applied
+    delete_unsmoothed : Boolean, default False
+        If True, unsmoothed data will be removed after smoothing
     keep_temp : Boolean, default False
         Should temporary folder that is set up be kept after function 
         runs?
@@ -704,18 +708,27 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
                 shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
                         -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.nii -map_func {6} \
                         -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
-                        -outcols_NSD_format -oob_value -0 {11}-out_niml {13}/{12}.niml.dset"
+                        -outcols_NSD_format -oob_value -0 {11}-out_niml {12}/{13}.niml.dset"
                           .format(specprefix, subject, suffix, hemi, vol_file, file_name, map_func, index, wm_mod,
-                                  gm_mod, steps, maskcode, output_file_name, tmp_dir), do_print=False)
+                                  gm_mod, steps, maskcode, tmp_dir, output_file_name), do_print=False)
                 # Removes output gii file if it exists
                 if os.path.isfile("{1}/{0}.gii".format(output_file_name, cur_dir)):
                     os.remove("{1}/{0}.gii".format(output_file_name, cur_dir))
                 # Converts the .niml.dset into a .gii file in the functional directory
-                shell_cmd("ConvertDset -o_gii_b64 -input {1}/{0}.niml.dset -prefix {2}/{0}.gii".format(output_file_name,
-                                                                                                       tmp_dir,
-                                                                                                       cur_dir),
-                          do_print=False)
+                shell_cmd("ConvertDset -o_gii_b64 -input {1}/{0}.niml.dset -prefix {2}/{0}.gii"
+                          .format(output_file_name, tmp_dir, cur_dir), do_print=False)
                 file_list.append('{1}/{0}'.format(output_file_name, cur_dir))
+
+                if blur_size > 0:
+                    # run smoothing
+                    shell_cmd("SurfSmooth -spec {0}{1}{2}_{3}.spec \
+                              -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}/{6}.gii \
+                                -cmask '-a {5}/{6}.gii[0] -expr bool(a)' -output {5}/{6}_{4}fwhm.gii"
+                                    .format(specprefix, subject, suffix, hemi, blur_size, cur_dir, output_file_name), do_print=False)
+                    if delete_unsmoothed:
+                        os.remove("{1}/{0}.gii".format(output_file_name, cur_dir))
+                else:
+                    assert(not delete_unsmoothed, "blur size set 0, but users wants unsmoothed data deleted")
         os.chdir(cur_dir)
         if keep_temp is not True:
             # remove temporary directory
