@@ -712,14 +712,19 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
                           .format(specprefix, subject, suffix, hemi, vol_file, file_name, map_func, index, wm_mod,
                                   gm_mod, steps, maskcode, tmp_dir, output_file_name), do_print=False)
                 # Removes output gii file if it exists
-                if os.path.isfile("{1}/{0}.gii".format(output_file_name, cur_dir)):
-                    os.remove("{1}/{0}.gii".format(output_file_name, cur_dir))
+                out_path = "{0}/{1}_{2}.gii".format(cur_dir, output_file_name)
+                if os.path.isfile(out_path):
+                    os.remove(out_path)
                 # Converts the .niml.dset into a .gii file in the functional directory
                 shell_cmd("ConvertDset -o_gii_b64 -input {1}/{0}.niml.dset -prefix {2}/{0}.gii"
                           .format(output_file_name, tmp_dir, cur_dir), do_print=False)
                 file_list.append('{1}/{0}'.format(output_file_name, cur_dir))
 
                 if blur_size > 0:
+                    # Removes output gii file if it exists
+                    out_path = "{0}/{1}_{2}fwhm.gii".format(cur_dir, output_file_name, blur_size)
+                    if os.path.isfile(out_path):
+                        os.remove(out_path)
                     # run smoothing
                     shell_cmd("SurfSmooth -spec {0}{1}{2}_{3}.spec \
                               -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}/{6}.gii \
@@ -728,7 +733,7 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
                     if delete_unsmoothed:
                         os.remove("{1}/{0}.gii".format(output_file_name, cur_dir))
                 else:
-                    assert(not delete_unsmoothed, "blur size set 0, but users wants unsmoothed data deleted")
+                    assert not delete_unsmoothed, "blur size set 0, but users wants unsmoothed data deleted"
         os.chdir(cur_dir)
         if keep_temp is not True:
             # remove temporary directory
