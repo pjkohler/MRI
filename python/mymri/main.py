@@ -2187,8 +2187,7 @@ def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', p
         print_wrap("SubjectAnalysis complete, took {0} seconds".format(elapsed))
 
 
-def whole_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM', make_plot=False,
-                return_rad=True):
+def whole_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM', make_plot=False, return_rad=True):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
     ------------
@@ -2203,7 +2202,7 @@ def whole_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='S
         ellipse type SEM or in format: 'x%CI'
     make_plot : boolean, default False
         If True, will produce a plot for each RoI
-    return_rad : boolean, default False
+    return_rad : boolean, default True
         Specify to return values in radians or degrees
     
     Returns
@@ -2257,7 +2256,7 @@ def whole_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='S
                 imag_data = np.mean(split_data[:, 1, :], axis=0, keepdims=True)
 
                 group_out[:, h * 4, r] = np.abs(real_data + 1j * imag_data)
-                phase_mean = np.angle(real_data + 1j * imag_data, return_rad)
+                phase_mean = np.angle(real_data + 1j * imag_data, not return_rad)
                 # unwrap negative phases   
                 phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + unwrap_factor[int(return_rad)]
                 group_out[:, h * 4 + 1, r] = phase_mean
