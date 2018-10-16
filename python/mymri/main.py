@@ -274,8 +274,7 @@ def read(path):
         out = pickle.load(f)
     return out
 
-
-def get_bids_data(target_folder, file_type='suma_native', session='01'):
+def get_bids_data(target_folder, file_type='suma_native', session='01', smooth=0):
     file_list = []
     if session == 'all':
         session_folders = ["{0}/{1}".format(target_folder, s) for s in os.listdir(target_folder) if 'ses' in s]
@@ -291,8 +290,12 @@ def get_bids_data(target_folder, file_type='suma_native', session='01'):
             file_list += [cur_dir + x for x in os.path.os.listdir(cur_dir) if x[-3:] == 'gii' and 'fsnative' in x]
         else:
             print_wrap('unknown file_type {0} provided'.format(file_type), indent=3)
-            print_wrap('... using fsnative'.format(file_type), indent=3)
+            print_wrap('... using fsnative', indent=3)
             file_list += [cur_dir + x for x in os.path.os.listdir(cur_dir) if x[-3:] == 'gii' and 'fsnative' in x]
+    if smooth > 0:
+        file_list = [x for x in file_list if "{0}fwhm".format(smooth) in x]
+    else:
+        file_list = [x for x in file_list if "fwhm" not in x]
     return file_list
 
 
@@ -2092,7 +2095,7 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
 
 
 def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
-                 session='all', tasks='All', offset=None, file_type='fsnative', report_timing=True):
+                 session='all', tasks='All', offset=None, file_type='fsnative', smooth=0, report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -2130,6 +2133,8 @@ def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', p
     file_type : str, default 'fsnative'
         Should files for combined harmonics
         be 'fsnative','sumanative' or 'sumastd141'
+    smooth: int, default 0
+        if not zero, load in smoothed data
     Returns
     ------------
     task_dic : dictionary
@@ -2146,66 +2151,58 @@ def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', p
         subjects = [files for files in os.listdir(exp_folder) if 'sub' in files and 'html' not in files]
     out_dic = {}
     if tasks == None:
-        print_wrap("Running SubjectAnalysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr, offset))
+        tasks = dict.fromkeys(["no task"], [pre_tr, offset])
+    elif type(tasks) is not dict:
+        if type(tasks) is str:
+            # make it a list
+            task_list = [tasks]
+        else:
+            task_list = tasks
+        # if 'all' is in list, do all tasks
+        if 'all' in [x.lower() for x in task_list]:
+            task_list = []
+            for sub in subjects:
+                task_list += get_bids_data("{0}/{1}".format(exp_folder, sub))
+            task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
+            task_list = list(set(task_list))
+        # make_dict and assign pre_tr and offset to dict
+        tasks = dict.fromkeys(task_list, [pre_tr, offset])
+    for task in tasks.keys():
+        pre_tr = tasks[task][0]
+        offset = tasks[task][1]
+
         for sub_int, sub in enumerate(subjects):
-            # produce list of files 
-            surf_files = get_bids_data("{0}/{1}".format(exp_folder, sub), file_type=file_type, session=session)
-            # run RoiSurfData
-            outdata, curnames = roi_get_data(surf_files, roi_type=roi_type, fsdir=fsdir, pre_tr=pre_tr, offset=offset)
-            # Define the empty array we want to fill or concatenate together
-            if sub_int == 0:
-                outdata_arr = np.array(outdata, ndmin=2)
-                roinames = curnames
+            # produce list of files
+            if task is "no task":
+                surf_files = get_bids_data("{0}/{1}".format(exp_folder, sub), file_type=file_type, session=session, smooth=smooth)
+                if sub_int == 0:
+                    print_wrap("Running SubjectAnalysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr, offset))
             else:
-                outdata_arr = np.concatenate((outdata_arr, np.array(outdata, ndmin=2)), axis=0)
-                assert roinames == curnames, "roi names do not match across subjects"
-        out_dic['no_task'] = {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roinames,
-                              "file_type": file_type}
-    else:
-        if type(tasks) is not dict:
-            if type(tasks) is str:
-                # make it a list 
-                task_list = [tasks]
-            else:
-                task_list = tasks
-            # if 'all' is in list, do all tasks
-            if 'all' in [x.lower() for x in task_list]:
-                task_list = []
-                for sub in subjects:
-                    task_list += get_bids_data("{0}/{1}".format(exp_folder, sub))
-                task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
-                task_list = list(set(task_list))
-            # make_dict and assign pre_tr and offset to dict
-            tasks = dict.fromkeys(task_list, [pre_tr, offset])
-        for task in tasks.keys():
-            pre_tr = tasks[task][0]
-            offset = tasks[task][1]
-            print_wrap("Running SubjectAnalysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
-            for sub_int, sub in enumerate(subjects):
-                # produce list of files 
                 surf_files = [f for f in
-                              get_bids_data("{0}/{1}".format(exp_folder, sub), file_type=file_type, session=session) if
+                              get_bids_data("{0}/{1}".format(exp_folder, sub), file_type=file_type, session=session, smooth=smooth) if
                               task in f]
-                if len(surf_files) > 0:
-                    # run RoiSurfData
-                    outdata, curnames = roi_get_data(surf_files, roi_type=roi_type, fsdir=fsdir, pre_tr=pre_tr,
-                                                     offset=offset)
-                    # Define the empty array we want to fill or concatenate together
-                    if sub_int == 0:
-                        outdata_arr = np.array(outdata, ndmin=2)
-                        roinames = curnames
-                    else:
-                        outdata_arr = np.concatenate((outdata_arr, np.array(outdata, ndmin=2)), axis=0)
-                        assert roinames == curnames, "roi names do not match across subjects"
-            out_dic[task] = {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roinames,
-                             "file_type": file_type}
-    return out_dic
+                if sub_int == 0:
+                    print_wrap("Running SubjectAnalysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
+            if len(surf_files) > 0:
+                # run RoiSurfData
+                outdata, curnames = roi_get_data(surf_files, roi_type=roi_type, fsdir=fsdir, pre_tr=pre_tr,
+                                                 offset=offset)
+                # Define the empty array we want to fill or concatenate together
+                if sub_int == 0:
+                    outdata_arr = np.array(outdata, ndmin=2)
+                    roinames = curnames
+                else:
+                    outdata_arr = np.concatenate((outdata_arr, np.array(outdata, ndmin=2)), axis=0)
+                    assert roinames == curnames, "roi names do not match across subjects"
+        out_dic[task] = {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roinames,
+                         "file_type": file_type}
     if report_timing:
         elapsed = time.time() - t
         print_wrap("SubjectAnalysis complete, took {0} seconds".format(elapsed))
+    return out_dic
 
 
-def whole_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM', make_plot=False, return_rad=True):
+def whole_group(subject_data, harmonic_list=['1'], return_rad=True):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
     ------------
@@ -2216,10 +2213,6 @@ def whole_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='S
         Can specify what output you would like.
         These are phase difference, amp difference and zSNR
         Options: 'all', 'phase', 'amp', 'zSNR',['phase','amp'] etc
-    ellipse_type : string, default 'SEM'
-        ellipse type SEM or in format: 'x%CI'
-    make_plot : boolean, default False
-        If True, will produce a plot for each RoI
     return_rad : boolean, default True
         Specify to return values in radians or degrees
     
