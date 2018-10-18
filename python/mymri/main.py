@@ -1601,9 +1601,15 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
     data_n = [None, None]
     for h, hemi in enumerate(["L", "R"]):
         cur_files = data_files[h]
+        smooth_list = [ x[x.find('fwhm') - 1] for x in cur_files ]
+        assert all(x == smooth_list[0] for x in smooth_list), "error, files have different levels of smooothing"
+        if smooth_list[0] == -1:
+            smooth_msg = "unsmoothed"
+        else:
+            smooth_msg = "{0}fwhm smoothed".format(smooth_list[0])
         if roi_type == "whole":
             hemi_data = []
-            print_wrap("doing whole brain analysis on {0} {1}H data files".format(len(cur_files), hemi), indent=2)
+            print_wrap("doing whole brain analysis on {0} {1} {2}H data files".format(len(cur_files), smooth_msg, hemi), indent=2)
         else:
             # roi-specific code begins here
             cur_roi = roi_file[h]
@@ -1646,10 +1652,10 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
                         ring_data[ready_idx] = idx_val + 1
                 # now set ring values as new roi values
                 roi_data = ring_data
-                print_wrap("applying {0}+{1} to {2} {3}H data files".
-                           format(cur_roi.split("/")[-1], cur_eccen.split("/")[-1], len(cur_files), hemi), indent=2)
+                print_wrap("applying {0}+{1} to {2} {3} {4}H data files".
+                           format(cur_roi.split("/")[-1], cur_eccen.split("/")[-1], len(cur_files), smooth_msg, hemi), indent=2)
             else:
-                print_wrap("applying {0} to {1} {2}H data files".format(cur_roi.split("/")[-1], len(cur_files), hemi),
+                print_wrap("applying {0} to {1} {2} {3}H data files".format(cur_roi.split("/")[-1], len(cur_files), smooth_msg, hemi),
                            indent=2)
 
         for run_file in cur_files:
