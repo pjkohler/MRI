@@ -34,4 +34,5 @@ if __name__ == "__main__":
         sys.exit(1)
     args = parser.parse_args()
 
-mymri.Suma(args.subject, args.hemi, args.openvol, args.surfvol, args.std141, args.fsdir)
+mymri.run_suma(args.subject, args.hemi, args.openvol, args.surfvol, args.std141, args.fsdir)
+
