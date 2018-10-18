@@ -2093,6 +2093,64 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
         plt.show()
     return amp_mean, amp_diff, phase_mean, phase_diff, zSNR, error_ellipse
 
+def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"):
+    #roi_labels = ["V1d", "V1v", "V2d", "V2v", "V3A", "V3B", "V3d", "LO1", "TO1", "V3v", "VO1", "hV4"]
+    if roi_labels == "wang":
+        label_path = "{0}/ROI_TEMPLATES/Wang2015/ROIfiles_Labeling.txt".format(os.environ["SUBJECTS_DIR"])
+        with open(label_path) as f:
+            roi_labels = f.readlines()
+            # you may also want to remove whitespace characters like `\n` at the end of each line
+        roi_labels = [x.strip()[7:] for x in roi_labels[1:]]
+
+    roi_match = []
+    calc_expr = []
+    for r, name in enumerate(roi_selection):
+        idx = []
+        # first handle annoying special cases, collections of rois
+        if name.lower() == "v3":
+            idx = [x for x, label in enumerate(roi_labels) if label.lower() in ["v3d", "v3v"]]
+        elif name.lower() == "v3ab":
+            idx = [x for x, label in enumerate(roi_labels) if label.lower() in ["v3a", "v3b"]]
+        elif name.lower() == "evc":
+            evc_names = ["v1d", "v1v", "v2d", "v2v", "v3d", "v3v"]
+            idx = [x for x, label in enumerate(roi_labels) if label.lower() in evc_names]
+        elif name.lower() == "to":
+            idx = [x for x, label in enumerate(roi_labels) if label.lower() in ["hmt", "mst"]]
+        else:
+            idx = [x for x, label in enumerate(roi_labels) if name.lower() in label.lower()]
+        # if idx is still empty, perhaps user is using other labels
+        if not idx:
+            if name.lower() == "v4":
+                name = "hV4"
+            elif name.lower() in ["to1", "mt"]:
+                name = "hMT"
+            elif name.lower() == "to2":
+                name = "MST"
+            idx = [x for x, label in enumerate(roi_labels) if name.lower() in label.lower()]
+        if idx:
+            roi_match.append((r + 1, [x + 1 for x in idx]))
+            for x in idx:
+                calc_expr.append("equals(a,{0})*{1}".format(x + 1, r + 1))
+        else:
+            roi_match.append((r + 1, [0]))
+    # concatenate calc expressions, run and return command
+    calc_expr = "+".join(calc_expr)
+
+    if out_file:
+        out_name = out_file.split("/")[-1]
+        cur_dir = os.getcwd()
+        tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+        os.chdir(tmp_dir)
+        calc_cmd = "3dcalc -a {0} -expr '{1}' -prefix {2}".format(in_file, calc_expr, out_name)
+        shell_cmd(calc_cmd)
+        shutil.move(out_name, out_file)
+        os.chdir(cur_dir)
+        # remove temporary directory
+        shutil.rmtree(tmp_dir)
+    else:
+        calc_cmd = "3dcalc -a {0} -expr '{1}' -prefix ????".format(in_file, calc_expr)
+
+    return calc_cmd
 
 def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
                  session='all', tasks='All', offset=None, file_type='fsnative', smooth=0, report_timing=True):
@@ -2231,6 +2289,7 @@ def whole_group(subject_data, harmonic_list=['1'], return_rad=True):
     print_wrap("Running group whole-brain analysis ...")
     group_dictionary = {}
     unwrap_factor = np.array([360, 2 * np.pi])
+    wunwrap_factor = np.array([360, 2 * np.pi])
     for t, task in enumerate(subject_data.keys()):
         # dictionary for output of error Ellipse
         # ellipse_dic={}
