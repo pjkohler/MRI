@@ -732,7 +732,7 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
                     # TO DO: MAKE DETRENDING OPTIONAL, CONSIDER ONLY SMOOTHING NON-PRE TRs
                     shell_cmd("SurfSmooth -spec {0}{1}{2}_{3}.spec \
                               -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}/{6}.gii \
-                                -cmask '-a {5}/{6}.gii[0] -detrend_in 2 -expr bool(a)' -output {5}/{6}_{4}fwhm.gii"
+                                -cmask '-a {5}/{6}.gii[0] -expr bool(a)' -detrend_in 2 -output {5}/{6}_{4}fwhm.gii"
                                     .format(specprefix, subject, suffix, hemi, blur_size, cur_dir, output_file_name), do_print=False)
                     if delete_unsmoothed:
                         os.remove("{1}/{0}.gii".format(output_file_name, cur_dir))
