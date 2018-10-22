@@ -1,7 +1,6 @@
 import os, subprocess, sys, glob, shutil, tempfile, re, time, textwrap
 from nilearn import surface as nl_surf
 from nilearn import signal as nl_signal
-from os.path import expanduser
 import numpy as np
 import pandas as pd
 import scipy as scp
@@ -56,17 +55,16 @@ def copy_suma_files(suma_dir, tmp_dir, subject, suffix="", spec_prefix=""):
         shutil.copy(files, tmp_dir)
 
 
-def mriparts(cur_file):
+def mri_parts(cur_file):
     path = "/".join(cur_file.split("/")[:-1])
     temp_name = cur_file.split("/")[-1]
 
     suffix_list = [".niml", ".gii", ".nii", "+orig"]
-    suffix_idx = [ temp_name.find(x) for x in suffix_list if temp_name.find(x) >= 0 ]
+    suffix_idx = [temp_name.find(x) for x in suffix_list if temp_name.find(x) >= 0]
 
     assert len(suffix_idx) == 1, "more than one suffix matches, not supposed to happen!"
 
-
-    suffix = temp_name[suffix_idx[0]+1:]
+    suffix = temp_name[suffix_idx[0] + 1:]
     name = temp_name[:suffix_idx[0]]
 
     if suffix == ".niml.roi":
@@ -90,6 +88,13 @@ def shell_cmd(main_cmd, fs_dir=None, do_print=False):
     if do_print:
         print(main_cmd + "\n")
     subprocess.call("{0}".format(main_cmd), shell=True)
+
+
+def make_temp_dir(top_temp=os.path.expanduser("~/mymri_temp")):
+    if not os.path.isdir(top_temp):
+        os.makedirs(top_temp)
+    tmp_dir = tempfile.mkdtemp("", "tmp_", top_temp)
+    return tmp_dir
 
 
 def fft_offset(complex_in, offset_rad):
@@ -167,7 +172,7 @@ def eig_fouriercoefs(xydata):
 
 def create_file_dictionary(experiment_dir):
     # creates file dictionary necessary for Vol2Surf
-    subjects = [x for x in os.listdir(experiment_dir) if 'sub' in x and os.path.isdir(os.path.join(experiment_dir,x)) ]
+    subjects = [x for x in os.listdir(experiment_dir) if 'sub' in x and os.path.isdir(os.path.join(experiment_dir, x))]
     subject_session_dic = {
         subject: [session for session in os.listdir("{0}/{1}".format(experiment_dir, subject)) if 'ses' in session] for
         subject in subjects}
@@ -269,7 +274,7 @@ def read(path):
     return out
 
 
-def get_data(target_folder, data_format="bids", space='suma_native', bids_proc="preproc", bids_ses='01'):
+def get_data_files(target_folder, data_format="bids", space='suma_native', bids_proc="preproc", bids_ses='01'):
     file_list = []
     # use bids format or not
     if data_format == "bids":
@@ -304,7 +309,8 @@ def get_data(target_folder, data_format="bids", space='suma_native', bids_proc="
             file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) for y in suffix if y in x]
         else:
             # search for the space variable directly
-            file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) for y in suffix if y in x and space in x]
+            file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) for y in suffix if
+                          y in x and space in x]
     assert file_list, "error: no files found with suffix {0}".format(suffix[0])
     return file_list
 
@@ -350,7 +356,7 @@ def run_suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=F
 
 def neuro_to_radio(in_files):
     for scan in in_files:
-        path, name, suffix = mriparts(scan)
+        path, name, suffix = mri_parts(scan)
         old_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True,
                                              universal_newlines=True)
         print_wrap("old orientation: {0}".format(old_orient))
@@ -398,7 +404,7 @@ def pre_slice(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_t
 
     # make temporary, local folder
     cur_dir = os.getcwd()
-    tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+    tmp_dir = make_temp_dir()
     os.chdir(tmp_dir)
 
     name_list = []
@@ -412,7 +418,7 @@ def pre_slice(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_t
         cur_total_tr = cur_total_tr.rstrip("\n")
 
         shell_cmd("3dTcat -prefix {0}+orig {1}/{0}{2}''[{3}..{4}]''"
-                        .format(file_name, cur_dir, suffix, pre_tr, min(cur_total_tr, total_tr)))
+                  .format(file_name, cur_dir, suffix, pre_tr, min(cur_total_tr, total_tr)))
 
         # slice timing correction
         if slice_time_file is None:
@@ -447,7 +453,7 @@ def pre_slice(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_t
         for file_name in name_list:
             shell_cmd("@Align_Centers -base {1}.ts.do+orig -dset {0}.ts.do+orig".format(file_name, ref_name))
             shell_cmd("3dresample -master {1}.ts.do+orig -prefix {0}.ts.do.rs+orig -inset {0}.ts.do_shft+orig"
-                    .format(file_name, ref_name))
+                      .format(file_name, ref_name))
             shell_cmd("3dAFNItoNIFTI -prefix {1}/{0}.ts.do.rs.nii.gz {0}.ts.do.rs+orig"
                       .format(file_name, cur_dir))
     os.chdir(cur_dir)
@@ -469,7 +475,7 @@ def pre_volreg(in_files, ref_file='last', slow=False, keep_temp=False):
 
     # make temporary, local folder
     cur_dir = os.getcwd()
-    tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+    tmp_dir = make_temp_dir()
     os.chdir(tmp_dir)
 
     for cur_file in in_files:
@@ -506,7 +512,7 @@ def pre_scale(in_files, no_dt=False, keep_temp=False):
 
     # make temporary, local folder
     cur_dir = os.getcwd()
-    tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+    tmp_dir = tmp_dir = make_temp_dir()
     os.chdir(tmp_dir)
 
     for cur_file in in_files:
@@ -528,7 +534,7 @@ def pre_scale(in_files, no_dt=False, keep_temp=False):
                 "3dcalc -float -a {0}+orig -b mean_{0}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {0}.sc+orig"
                     .format(file_name))
             shell_cmd("3dDetrend -prefix {1}/{0}.sc.dt.nii.gz -polort 2 -vector {1}/motparam.{0}.1D {0}.sc+orig"
-                            .format(file_name, cur_dir))
+                      .format(file_name, cur_dir))
 
     os.chdir(cur_dir)
     if keep_temp is not True:
@@ -633,14 +639,15 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
             print_wrap("Running subject {0}, native:".format(sub))
 
         if data_format == "bids":
-            in_files = get_data("{0}/{1}".format(experiment_dir, sub), data_format="bids", space="T1w", bids_proc=bids_proc, bids_ses=bids_ses)
+            in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_format="bids", space="T1w",
+                                bids_proc=bids_proc, bids_ses=bids_ses)
         else:
-            in_files = get_data("{0}/{1}".format(experiment_dir, sub), data_format=data_format)
+            in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_format=data_format)
 
         output_name_dic = {}
 
         # make temporary, local folder
-        tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+        tmp_dir = tmp_dir = make_temp_dir()
 
         # check if subjects' SUMA directory exists
         suffix = fs_dir_check(fs_dir, sub)
@@ -678,7 +685,7 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         print_wrap("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod, gm_mod, steps), indent=1)
 
         for cur_file in in_files:
-            cur_path, cur_name, cur_suffix = mriparts(cur_file)
+            cur_path, cur_name, cur_suffix = mri_parts(cur_file)
             if std141 == False:
                 new = 'space-sumanative_'
             else:
@@ -701,7 +708,7 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
                     maskcode = "-cmask '-a {0}[0] -expr notzero(a)' ".format(cur_name)
                 else:
                     # mask from distinct dataset, copy mask to folder
-                    mask_path, mask_name, mask_suffix = mriparts(mask)
+                    mask_path, mask_name, mask_suffix = mri_parts(mask)
                     if not mask_path:
                         mask_path = cur_path
                     shell_cmd("3dcopy {0} mask+orig".format(mask_path, mask_name, mask_suffix))
@@ -731,10 +738,10 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     print_wrap('Vol2Surf run complete')
     return file_list
 
+
 def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
                 data_format="bids", bids_proc="preproc", bids_ses="01", std141=True,
                 blur_size=3.0, detrend=True, prefix=None, out_dir=None, keep_temp=False):
-
     """
     Function for smoothing surface MRI data
     Supports suma surfaces in native and std141 space,
@@ -804,14 +811,14 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     for sub in subjects:
         if std141:
             print_wrap("Smoothing subject {0}, sumastd141 space, with a {1} fwhm kernel".format(sub, blur_size))
-            in_files = get_data("{0}/{1}".format(experiment_dir, sub), data_format=data_format, space="sumastd141",
+            in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_format=data_format, space="sumastd141",
                                 bids_proc=bids_proc, bids_ses=bids_ses)
         else:
             print_wrap("Smoothing subject {0}, native space, with a {1} fwhm kernel".format(sub, blur_size))
-            in_files = get_data("{0}/{1}".format(experiment_dir, sub), data_format=data_format, space="sumanative",
+            in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_format=data_format, space="sumanative",
                                 bids_proc=bids_proc, bids_ses=bids_ses)
         # make temporary, local folder
-        tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+        tmp_dir = tmp_dir = make_temp_dir()
 
         # check if subjects' SUMA directory exists
         suffix = fs_dir_check(fs_dir, sub)
@@ -832,7 +839,7 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         copy_suma_files(suma_dir, tmp_dir, sub, spec_prefix=specprefix)
 
         for cur_file in in_files:
-            cur_dir, cur_name, cur_suffix = mriparts(cur_file)
+            cur_dir, cur_name, cur_suffix = mri_parts(cur_file)
             if out_dir:
                 dest_dir = out_dir
             else:
@@ -841,7 +848,7 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
                 processing = cur_name.split("_")[-1]
                 hemi = processing.split(".")[-1]
                 processing = processing.split(".")[0]
-                new_name = cur_name.replace(processing, processing+"-{0}fwhm".format(blur_size))
+                new_name = cur_name.replace(processing, processing + "-{0}fwhm".format(blur_size))
             else:
                 if any([x in cur_name for x in ["lh", ".L"]]):
                     hemi = "L"
@@ -855,13 +862,14 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
             os.chdir(tmp_dir)
 
             # copy input file
-            shutil.copyfile(cur_file, "{0}.{1}".format(cur_name,cur_suffix))
+            shutil.copyfile(cur_file, "{0}.{1}".format(cur_name, cur_suffix))
 
             # run smoothing
             shell_cmd("SurfSmooth -spec {0}{1}{2}_{3}.spec \
                                 -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}.{6} \
                                 -cmask '-a {5}.{6}[0] -expr bool(a)' {7}-output {8}.{6}"
-                          .format(specprefix, sub, suffix, hemi_dic[hemi], blur_size, cur_name, cur_suffix, detrend_cmd, new_name))
+                      .format(specprefix, sub, suffix, hemi_dic[hemi], blur_size, cur_name, cur_suffix, detrend_cmd,
+                              new_name))
 
             # Removes output gii file if it exists
             out_path = "{0}/{1}.{2}".format(dest_dir, new_name, cur_suffix)
@@ -871,12 +879,14 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
             # copy output file
             shutil.copyfile("{0}/{1}.{2}".format(tmp_dir, new_name, cur_suffix), out_path)
             # copy smoothing record file, give more reasonable name
-            shutil.copyfile("{0}/{1}.{2}.1D.smrec".format(tmp_dir, new_name, cur_suffix), "{0}/{1}.smrec.1D".format(dest_dir, new_name, cur_suffix))
+            shutil.copyfile("{0}/{1}.{2}.1D.smrec".format(tmp_dir, new_name, cur_suffix),
+                            "{0}/{1}.smrec.1D".format(dest_dir, new_name, cur_suffix))
 
         os.chdir(cur_dir)
         if keep_temp is not True:
             # remove temporary directory
             shutil.rmtree(tmp_dir)
+
 
 def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10,
                 out_dir=None, fs_dir=None, surf_vol='standard', std141=False, keep_temp=False):
@@ -893,7 +903,7 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
     cur_dir = os.getcwd()
 
     # make temporary, local folder
-    tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+    tmp_dir = tmp_dir = make_temp_dir()
 
     # check if subjects' freesurfer directory exists
     if fs_dir is None:
@@ -939,7 +949,7 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
     os.chdir(tmp_dir)
     for cur_file in in_files:
         shutil.copy("{0}/{1}".format(cur_dir, cur_file), tmp_dir)
-        file_path, file_name, file_suffix = mriparts(cur_file)
+        file_path, file_name, file_suffix = mri_parts(cur_file)
 
         if 'lh' in file_name.split('.'):
             hemi = 'lh'
@@ -953,8 +963,8 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
                     -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {4} \
                     -sdata {5}.niml.dset -map_func {6} -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
                     -prefix {11}/{5}"
-                        .format(specprefix, subject, suffix, hemi, vol_file, file_name, map_func, index, wm_mod, gm_mod,
-                                steps, tmp_dir))
+                  .format(specprefix, subject, suffix, hemi, vol_file, file_name, map_func, index, wm_mod, gm_mod,
+                          steps, tmp_dir))
 
         shell_cmd("3dcopy {2}/{0}+orig {1}/{0}.nii.gz".format(file_name, out_dir, tmp_dir))
 
@@ -965,7 +975,7 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
 
 
 def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="standard", forcex=False,
-                  separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode",
+                  separate_out=False, keep_temp=False, skipclust=False, intertype="NearestNode",
                   force_new_mapping=False):
     """Function for generating ROIs in subject's native space 
     predicted from the cortical surface anatomy.
@@ -1002,7 +1012,7 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="
     separate_out : boolean, default False
             Can choose to separate out as part of Benson into ["angle", "eccen", 
             "areas", "all"]
-    keeptemp : boolean, default False
+    keep_temp : boolean, default False
             Option to keep the temporary files that are generated
     skipclust : boolean, default False
             If True then will do optional surface-based clustering as part
@@ -1075,7 +1085,7 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="
             outdir = "{0}/{1}/TEMPLATE_ROIS".format(outdir, sub, suffix)  # force sub in name, in case multiple subjects
 
         # make temporary, local folder
-        tmpdir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+        tmpdir = tmp_dir = make_temp_dir()
 
         # and subfoldes
         os.mkdir(tmpdir + "/surf")
@@ -1280,10 +1290,10 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="
 
                         for file in glob.glob("./*temp*"):
                             os.remove(file)
-                    # is this step necessary?
+                        # is this step necessary?
                         shell_cmd(
-                        "ConvertDset -input {1}.{0}_cluster.niml.dset -o_niml_asc -prefix ./TEMPLATE_ROIS/{1}.temp4.niml.dset"
-                            .format(outname, hemi, idx))
+                            "ConvertDset -input {1}.{0}_cluster.niml.dset -o_niml_asc -prefix ./TEMPLATE_ROIS/{1}.temp4.niml.dset"
+                                .format(outname, hemi, idx))
                     os.remove("{1}.{0}_cluster.niml.dset".format(outname, hemi))
                     os.rename("./TEMPLATE_ROIS/{0}.temp4.niml.dset".format(hemi),
                               "./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname, hemi))
@@ -1339,7 +1349,7 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="
                     # convert to gifti
                     shell_cmd(
                         "mris_convert --label {0}.{1}_TEMP.label {1} ./surf/{0}.white {0}.{1}_TEMP.gii"
-                            .format(hemi,roi))
+                            .format(hemi, roi))
 
                     # convert to .niml.dset
                     shell_cmd(
@@ -1362,7 +1372,8 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="
                         "ROIgrow -spec ./SUMA/{2}{3}_{0}.spec -surf_A ./SUMA/{0}.smoothwm.{4} -roi_labels {0}.{1}_TEMP3.niml.dset -lim 1 -prefix {0}.{1}_TEMP4"
                             .format(hemi, roi, sub, suffix, file_format))
 
-                    numnodes = subprocess.check_output("3dinfo -ni {0}.{1}_TEMP3.niml.dset".format(hemi, roi), shell=True)
+                    numnodes = subprocess.check_output("3dinfo -ni {0}.{1}_TEMP3.niml.dset".format(hemi, roi),
+                                                       shell=True)
                     numnodes = numnodes.decode('ascii')
                     numnodes = int(numnodes.rstrip("\n"))
                     numnodes = numnodes - 1
@@ -1399,11 +1410,12 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}_new".format(outdir))
         else:
             shutil.move("{0}/TEMPLATE_ROIS".format(tmpdir), "{0}".format(outdir))
-        if keeptemp is not True:
+        if keep_temp is not True:
             # remove temporary directory
             shutil.rmtree(tmpdir)
     # reset the subjects dir
     os.environ["SUBJECTS_DIR"] = old_subject_dir
+
 
 def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
     """
@@ -2193,7 +2205,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
     if out_file:
         out_name = out_file.split("/")[-1]
         cur_dir = os.getcwd()
-        tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
+        tmp_dir = tmp_dir = make_temp_dir()
         os.chdir(tmp_dir)
         calc_cmd = "3dcalc -a {0} -expr '{1}' -prefix {2}".format(in_file, calc_expr, out_name)
         shell_cmd(calc_cmd)
@@ -2208,7 +2220,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
 
 
 def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
-                 session='all', tasks='All', offset=None, file_type='fsnative', smooth=0, report_timing=True):
+                 session='all', proc='preproc', tasks='All', offset=None, space='fsnative', smooth=0, report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -2243,9 +2255,11 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         Negative values means the first data frame was 
         shifted backwards relative to stimulus.
         example: {'cont':2,'disp':8,'mot':2}
-    file_type : str, default 'fsnative'
+    space : str, default 'fsnative'
         Should files for combined harmonics
         be 'fsnative','sumanative' or 'sumastd141'
+    proc: str, default 'preproc'
+        processing stage, bids-style
     smooth: int, default 0
         if not zero, load in smoothed data
     Returns
@@ -2261,7 +2275,7 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
     """
     t = time.time()
     if subjects == 'All':
-        subjects = [x for x in os.listdir(exp_folder) if 'sub' in x and os.path.isdir(os.path.join(exp_folder,x))]
+        subjects = [x for x in os.listdir(exp_folder) if 'sub' in x and os.path.isdir(os.path.join(exp_folder, x))]
     out_dic = {}
     if tasks == None:
         tasks = dict.fromkeys(["no task"], [pre_tr, offset])
@@ -2275,7 +2289,7 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         if 'all' in [x.lower() for x in task_list]:
             task_list = []
             for sub in subjects:
-                task_list += get_data("{0}/{1}".format(exp_folder, sub))
+                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), data_format="bids", space=space, bids_proc=proc, bids_ses=session, smooth=smooth)
             task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
@@ -2287,17 +2301,17 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         for sub_int, sub in enumerate(subjects):
             # produce list of files
             if task is "no task":
-                surf_files = get_data("{0}/{1}".format(exp_folder, sub), file_type=file_type, session=session,
-                                           smooth=smooth)
+                surf_files = get_data_files("{0}/{1}".format(exp_folder, sub),
+                                    data_format="bids", space=space, bids_proc=proc, bids_ses=session, smooth=smooth)
                 if sub_int == 0:
                     print_wrap(
                         "Running SubjectAnalysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,
                                                                                                             offset))
             else:
                 surf_files = [f for f in
-                              get_data("{0}/{1}".format(exp_folder, sub), file_type=file_type, session=session,
-                                            smooth=smooth) if
-                              task in f]
+                              get_data_files("{0}/{1}".format(exp_folder, sub),
+                                     data_format="bids", space=space, bids_proc=proc, bids_ses=session, smooth=smooth)
+                              if task in f]
                 if sub_int == 0:
                     print_wrap(
                         "Running SubjectAnalysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
@@ -2313,7 +2327,7 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
                     outdata_arr = np.concatenate((outdata_arr, np.array(outdata, ndmin=2)), axis=0)
                     assert roinames == curnames, "roi names do not match across subjects"
         out_dic[task] = {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roinames,
-                         "file_type": file_type}
+                         "space": space}
     if report_timing:
         elapsed = time.time() - t
         print_wrap("SubjectAnalysis complete, took {0} seconds".format(elapsed))
