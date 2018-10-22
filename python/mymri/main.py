@@ -66,7 +66,7 @@ def mriparts(cur_file):
     assert len(suffix_idx) == 1, "more than one suffix matches, not supposed to happen!"
 
 
-    suffix = temp_name[suffix_idx[0]:]
+    suffix = temp_name[suffix_idx[0]+1:]
     name = temp_name[:suffix_idx[0]]
 
     if suffix == ".niml.roi":
@@ -84,9 +84,9 @@ def rsync(input, output):
     return stderr
 
 
-def shell_cmd(main_cmd, fsdir=None, do_print=False):
-    if fsdir is not None:
-        main_cmd = "export SUBJECTS_DIR={0}; {1}".format(fsdir, main_cmd)
+def shell_cmd(main_cmd, fs_dir=None, do_print=False):
+    if fs_dir is not None:
+        main_cmd = "export SUBJECTS_DIR={0}; {1}".format(fs_dir, main_cmd)
     if do_print:
         print(main_cmd + "\n")
     subprocess.call("{0}".format(main_cmd), shell=True)
@@ -343,9 +343,9 @@ def run_suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=F
         vol_file = surf_vol.split('/')[-1]
         if vol_dir:  # if volume directory is not empty
             os.chdir(vol_dir)
-        subprocess.call("afni -niml & SUMA -spec {0} -sv {1} &".format(spec_file, vol_file), shell=True)
+        shell_cmd("afni -niml & SUMA -spec {0} -sv {1} &".format(spec_file, vol_file))
     else:
-        subprocess.call("SUMA -spec {0} &".format(spec_file), shell=True)
+        shell_cmd("SUMA -spec {0} &".format(spec_file))
 
 
 def neuro_to_radio(in_files):
@@ -411,31 +411,27 @@ def pre_slice(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_t
                                                .format(file_name, cur_dir, suffix), shell=True)
         cur_total_tr = cur_total_tr.rstrip("\n")
 
-        subprocess.call("3dTcat -prefix {0}+orig {1}/{0}{2}''[{3}..{4}]''"
-                        .format(file_name, cur_dir, suffix, pre_tr, min(cur_total_tr, total_tr)), shell=True)
+        shell_cmd("3dTcat -prefix {0}+orig {1}/{0}{2}''[{3}..{4}]''"
+                        .format(file_name, cur_dir, suffix, pre_tr, min(cur_total_tr, total_tr)))
 
         # slice timing correction
         if slice_time_file is None:
-            subprocess.call(
-                "3dTshift -quintic -prefix {0}.ts+orig -TR {1}s -tzero 0 -tpattern alt+z {0}+orig".format(file_name,
-                                                                                                          tr_dur),
-                shell=True)
+            shell_cmd("3dTshift -quintic -prefix {0}.ts+orig -TR {1}s -tzero 0 -tpattern alt+z {0}+orig"
+                      .format(file_name, tr_dur))
         else:
-            subprocess.call("3dTshift -quintic -prefix {0}/{1}.ts+orig -TR {2}s -tzero 0 -tpattern @{3} {0}/{1}+orig"
-                            .format(tmp_dir, file_name, tr_dur, slice_time_file), shell=True)
+            shell_cmd("3dTshift -quintic -prefix {0}/{1}.ts+orig -TR {2}s -tzero 0 -tpattern @{3} {0}/{1}+orig"
+                      .format(tmp_dir, file_name, tr_dur, slice_time_file))
 
         # deoblique
-        subprocess.call("3dWarp -deoblique -prefix {0}.ts.do+orig {0}.ts+orig".format(file_name), shell=True)
+        shell_cmd("3dWarp -deoblique -prefix {0}.ts.do+orig {0}.ts+orig".format(file_name))
 
         # pad 
         if pad_ap is not 0 or pad_is is not 0:
-            subprocess.call(
-                "3dZeropad -A {1} -P {1} -I {2} -S {2} -prefix {0}.ts.do.pad+orig {0}.ts.do+orig".format(file_name,
-                                                                                                         pad_ap,
-                                                                                                         pad_is),
-                shell=True)
-            subprocess.call("rm {0}.ts.do+orig*".format(file_name), shell=True)
-            subprocess.call("3dRename {0}.ts.do.pad+orig {0}.ts.do+orig".format(file_name), shell=True)
+            shell_cmd(
+                "3dZeropad -A {1} -P {1} -I {2} -S {2} -prefix {0}.ts.do.pad+orig {0}.ts.do+orig"
+                    .format(file_name, pad_ap, pad_is))
+            shell_cmd("rm {0}.ts.do+orig*".format(file_name))
+            shell_cmd("3dRename {0}.ts.do.pad+orig {0}.ts.do+orig".format(file_name))
 
         if diff_mat:
             # add file_names to list, move later
@@ -443,21 +439,17 @@ def pre_slice(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_t
             if cur_file == ref_file:
                 ref_name = file_name
         else:
-            subprocess.call("3dAFNItoNIFTI -prefix {1}/{0}.ts.do.nii.gz {0}.ts.do+orig".format(file_name, cur_dir),
-                            shell=True)
+            shell_cmd("3dAFNItoNIFTI -prefix {1}/{0}.ts.do.nii.gz {0}.ts.do+orig"
+                      .format(file_name, cur_dir))
 
     if diff_mat:
         # take care of different matrices, and move
         for file_name in name_list:
-            subprocess.call("@Align_Centers -base {1}.ts.do+orig -dset {0}.ts.do+orig".format(file_name, ref_name),
-                            shell=True)
-            subprocess.call(
-                "3dresample -master {1}.ts.do+orig -prefix {0}.ts.do.rs+orig -inset {0}.ts.do_shft+orig".format(
-                    file_name, ref_name), shell=True)
-            subprocess.call(
-                "3dAFNItoNIFTI -prefix {1}/{0}.ts.do.rs.nii.gz {0}.ts.do.rs+orig".format(file_name, cur_dir),
-                shell=True)
-
+            shell_cmd("@Align_Centers -base {1}.ts.do+orig -dset {0}.ts.do+orig".format(file_name, ref_name))
+            shell_cmd("3dresample -master {1}.ts.do+orig -prefix {0}.ts.do.rs+orig -inset {0}.ts.do_shft+orig"
+                    .format(file_name, ref_name))
+            shell_cmd("3dAFNItoNIFTI -prefix {1}/{0}.ts.do.rs.nii.gz {0}.ts.do.rs+orig"
+                      .format(file_name, cur_dir))
     os.chdir(cur_dir)
     if keep_temp is not True:
         # remove temporary directory
@@ -484,17 +476,17 @@ def pre_volreg(in_files, ref_file='last', slow=False, keep_temp=False):
         temp_path, file_name, suffix = mri_parts(cur_file)
 
         # move files
-        subprocess.call("3dcopy {1}/{0}{2} {0}+orig".format(file_name, cur_dir, suffix), shell=True)
+        shell_cmd("3dcopy {1}/{0}{2} {0}+orig".format(file_name, cur_dir, suffix))
 
         # do volume registration
         if slow:
-            subprocess.call(
+            shell_cmd(
                 "3dvolreg -verbose -zpad 1 -base {2}/{1}''[0]'' -1Dfile {2}/motparam.{0}.vr.1D -prefix {2}/{0}.vr.nii.gz -heptic -twopass -maxite 50 {0}+orig"
-                    .format(file_name, ref_file, cur_dir), shell=True)
+                    .format(file_name, ref_file, cur_dir))
         else:
-            subprocess.call(
+            shell_cmd(
                 "3dvolreg -verbose -zpad 1 -base {2}/{1}''[0]'' -1Dfile {2}/motparam.{0}.vr.1D -prefix {2}/{0}.vr.nii.gz -Fourier {0}+orig"
-                    .format(file_name, ref_file, cur_dir), shell=True)
+                    .format(file_name, ref_file, cur_dir))
 
     os.chdir(cur_dir)
     if keep_temp is not True:
@@ -521,22 +513,22 @@ def pre_scale(in_files, no_dt=False, keep_temp=False):
         temp_path, file_name, suffix = (cur_file)
 
         # move files
-        subprocess.call("3dcopy {1}/{0}{2} {0}+orig".format(file_name, cur_dir, suffix), shell=True)
+        shell_cmd("3dcopy {1}/{0}{2} {0}+orig".format(file_name, cur_dir, suffix))
         # compute mean
-        subprocess.call("3dTstat -prefix mean_{0}+orig {0}+orig".format(file_name), shell=True)
+        shell_cmd("3dTstat -prefix mean_{0}+orig {0}+orig".format(file_name))
         # scale
         if no_dt:
             # save scaled data in data folder directly
-            subprocess.call(
+            shell_cmd(
                 "3dcalc -float -a {0}+orig -b mean_{0}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {1}/{0}.sc.nii.gz"
-                    .format(file_name, cur_dir), shell=True)
+                    .format(file_name, cur_dir))
         else:
             # scale, then detrend and store in data folder
-            subprocess.call(
+            shell_cmd(
                 "3dcalc -float -a {0}+orig -b mean_{0}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {0}.sc+orig"
-                    .format(file_name), shell=True)
-            subprocess.call("3dDetrend -prefix {1}/{0}.sc.dt.nii.gz -polort 2 -vector {1}/motparam.{0}.1D {0}.sc+orig"
-                            .format(file_name, cur_dir), shell=True)
+                    .format(file_name))
+            shell_cmd("3dDetrend -prefix {1}/{0}.sc.dt.nii.gz -polort 2 -vector {1}/motparam.{0}.1D {0}.sc+orig"
+                            .format(file_name, cur_dir))
 
     os.chdir(cur_dir)
     if keep_temp is not True:
@@ -544,7 +536,7 @@ def pre_scale(in_files, no_dt=False, keep_temp=False):
         shutil.rmtree(tmp_dir)
 
 
-def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
+def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
                 data_format="bids", bids_proc="preproc", bids_ses="01",
                 std141=False, surf_vol='standard', prefix=None,
                 map_func='ave', wm_mod=0.0, gm_mod=0.0, index='voxels', steps=10, mask=None,
@@ -568,7 +560,7 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
     experiment_dir : string
         The directory for the fmri data for the experiment
         Example: '/Volumes/Computer/Users/Username/Experiment/fmriprep'
-    fsdir : string, default os.environ["SUBJECTS_DIR"]
+    fs_dir : string, default os.environ["SUBJECTS_DIR"]
         Freesurfer directory
     subjects : list of strings, Default None
         Optional parameter, if wish to limit function to only certain subjects
@@ -606,7 +598,8 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
         f_pn_fr. To extend segment past pn fraction will be postive.
         To reduce segment back to p1 will be negative
     prefix : string, default None
-        File may need a specific prefix
+        strange option that allows users to specify a prefix 'X' to the name of
+        std141 files, such that std141.'X'.SUBNAME_lh.spec is the spec filename
     index : string, default 'voxels'
         Parameter for AFNI 3dVol2Surf function. Parameter is:
         f_index. Specifies whether to use all seg points or
@@ -650,11 +643,11 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
         tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
 
         # check if subjects' SUMA directory exists
-        suffix = fs_dir_check(fsdir, sub)
-        suma_dir = "{0}/{1}{2}/SUMA".format(fsdir, sub, suffix)
+        suffix = fs_dir_check(fs_dir, sub)
+        suma_dir = "{0}/{1}{2}/SUMA".format(fs_dir, sub, suffix)
 
         if surf_vol is "standard":
-            vol_dir = "{0}/{1}{2}/SUMA".format(fsdir, sub, suffix)
+            vol_dir = "{0}/{1}{2}/SUMA".format(fs_dir, sub, suffix)
             vol_file = "{0}{1}_SurfVol.nii".format(sub, suffix)
         else:
             assert os.path.isfile(surf_vol), "surf vol {0} does not exist"
@@ -738,42 +731,91 @@ def vol_to_surf(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], subjects=None,
     print_wrap('Vol2Surf run complete')
     return file_list
 
-def surf_smooth(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], blur_size=3.0, detrend=True,
-                prefix=None, data_format="bids", bids_proc="preproc", bids_ses="01", std141=True,
-                subjects=None, sub_prefix="sub-", outdir="same", keeptemp=False):
+def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
+                data_format="bids", bids_proc="preproc", bids_ses="01", std141=True,
+                blur_size=3.0, detrend=True, prefix=None, out_dir=None, keep_temp=False):
 
     """
-    Function smooths surface MRI data
-    - this takes in regular and standardised data
+    Function for smoothing surface MRI data
+    Supports suma surfaces in native and std141 space,
+    and can handle gifti or niml.dset format
+    Wraps afnis SurfSmooth function:
+    see: https://afni.nimh.nih.gov/pub/dist/doc/program_help/SurfSmooth.html
+
+    Author: pjkohler, Stanford University, 2016
+    Updated : fhethomas, 2018
+
+    Parameters
+    ------------
+    experiment_dir : string
+        The directory for the fmri data for the experiment
+        Example: '/Volumes/Computer/Users/Username/Experiment/fmriprep'
+    fs_dir : string, default os.environ["SUBJECTS_DIR"]
+        Freesurfer directory
+    subjects : list of strings, Default None
+        Optional parameter, if wish to limit function to only certain subjects
+        that are to be run. Example : ['sub-0001','sub-0002']
+    sub_prefix : str, default: "sub-"
+        prefix used for subject data directories
+        useful when non-subject folders exist within experiment_dir
+    data_format : str, default: "bids"
+        "bids" indicate that data are stored in bids format,
+        and the "bids_proc" and "bids_ses" will be used to select files
+        currently the only other acceptable inputs are "gii", "gii.gz" and "niml.dset"
+    bids_proc : str, Default "preproc"
+        only used when "data_format" is "bids",
+        specifies the processing stage of the files to use
+    bids_ses : str, Default "01"
+        only used when "data_format" is "bids",
+        specifies the bids sessions to use
+    std141 : Boolean, default False
+        Is subject to be run with standard 141?
+    blur_size: int, default 3
+        value input to SurfSmooth's '-target_fwhm' parameter
+    detrend : Boolean, default True
+        if true, '-detrend_in 2' is added to the SurfSmooth cmd
+    out_dir : str, path to output directory, default None
+        if not given, smoothed files will be placed in same directory as input files
+    prefix : string, default None
+        strange option that allows users to specify a prefix 'X' to the name of
+        std141 files, such that std141.'X'.SUBNAME_lh.spec is the spec filename
+        no sure why this was ever necessary, but leaving it in for now
+    keep_temp : Boolean, default False
+        Should temporary folder that is set up be kept after function
+        runs?
     """
-    blur_size = float(blur_size)
+    blur_size = int(blur_size)
     assert blur_size > 0, " blur size {0} must be bigger than zero".format(blur_size)
     file_list = []
 
     if not subjects:
-        subjects = [x for x in os.listdir(experiment_dir) if x.find(sub_prefix) == 0]
+        subjects = [x for x in os.listdir(experiment_dir) if
+                    x.find(sub_prefix) == 0 and os.path.isdir(os.path.join(experiment_dir, x))]
 
     # Dict to convert between old and new hemisphere notation
-    hemi_dic = {'lh': 'L', 'rh': 'R'}
+    hemi_dic = {'lh': 'L', 'rh': 'R', 'L': 'lh', 'R': 'rh'}
+
+    if detrend:
+        detrend_cmd = "-detrend_in 2 "
+    else:
+        detrend_cmd = ""
 
     # Iterate over subjects
     for sub in subjects:
-        if std141==True:
-            print_wrap("Smoothing subject {0}, sumastd141 space, with a {1} fwhm kernel:".format(sub, blur_size))
+        if std141:
+            print_wrap("Smoothing subject {0}, sumastd141 space, with a {1} fwhm kernel".format(sub, blur_size))
             in_files = get_data("{0}/{1}".format(experiment_dir, sub), data_format=data_format, space="sumastd141",
                                 bids_proc=bids_proc, bids_ses=bids_ses)
         else:
-            print_wrap("Smoothing subject {0}, native space, with a {1} fwhm kernel:".format(sub, blur_size))
+            print_wrap("Smoothing subject {0}, native space, with a {1} fwhm kernel".format(sub, blur_size))
             in_files = get_data("{0}/{1}".format(experiment_dir, sub), data_format=data_format, space="sumanative",
                                 bids_proc=bids_proc, bids_ses=bids_ses)
-        output_name_dic = {}
-
         # make temporary, local folder
         tmp_dir = tempfile.mkdtemp("", "tmp", expanduser("~/Desktop"))
 
         # check if subjects' SUMA directory exists
-        suffix = fs_dir_check(fsdir, sub)
-        suma_dir = "{0}/{1}{2}/SUMA".format(fsdir, sub, suffix)
+        suffix = fs_dir_check(fs_dir, sub)
+        suma_dir = "{0}/{1}{2}/SUMA".format(fs_dir, sub, suffix)
 
         # now get specfiles
         if prefix is None:
@@ -790,58 +832,51 @@ def surf_smooth(experiment_dir, fsdir=os.environ["SUBJECTS_DIR"], blur_size=3.0,
         copy_suma_files(suma_dir, tmp_dir, sub, spec_prefix=specprefix)
 
         for cur_file in in_files:
-            cur_path, cur_name, cur_suffix = mriparts(cur_file)
-
-            ## WE ARE HERE, NEED TO RESOLVE HEMISPHERES AND RENAMING
-            if std141 == False:
-                new = 'space-sumanative_'
+            cur_dir, cur_name, cur_suffix = mriparts(cur_file)
+            if out_dir:
+                dest_dir = out_dir
             else:
-                new = 'space-sumastd141_'
+                dest_dir = cur_dir
             if data_format == "bids":
-                old = re.findall('space-\w+_', cur_name)[0]
-                output_name_dic[cur_name] = cur_name.replace(old, new)
+                processing = cur_name.split("_")[-1]
+                hemi = processing.split(".")[-1]
+                processing = processing.split(".")[0]
+                new_name = cur_name.replace(processing, processing+"-{0}fwhm".format(blur_size))
             else:
-                output_name_dic[cur_name] = '{0}_{1}'.format(cur_name, new)
+                if any([x in cur_name for x in ["lh", ".L"]]):
+                    hemi = "L"
+                elif any([x in cur_name for x in ["rh", ".R"]]):
+                    hemi = "R"
+                else:
+                    print_wrap("hemisphere could not be determined for file {0}".format(cur_file))
+                    return
+                new_name = '{0}-{1}fwhm'.format(cur_name, blur_size)
 
             os.chdir(tmp_dir)
-            for hemi in ["lh", "rh"]:
-                # Removes output gii file if it exists
-                out_path = "{0}/{1}_{2}fwhm.gii".format(cur_path, cur_name, blur_size)
-                if os.path.isfile(out_path):
-                    os.remove(out_path)
-                # run smoothing
-                shell_cmd("SurfSmooth -spec {0}{1}{2}_{3}.spec \
-                                          -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}/{6}.gii \
-                                            -cmask '-a {5}/{6}.gii[0] -expr bool(a)' {7}-output {5}/{6}.gii"
-                          .format(specprefix, sub, suffix, hemi, blur_size, cur_path, out_path))
 
-    os.chdir(curdir)
-    if keeptemp is not True:
-        # remove temporary directory
-        shutil.rmtree(tmpdir)
+            # copy input file
+            shutil.copyfile(cur_file, "{0}.{1}".format(cur_name,cur_suffix))
 
-    for curfile in infiles:
-        if ".niml.dset" in curfile:
-            filename = curfile[:-10]
-            splitString = filename.split(".", 1)
-            # print(splitString)
-            hemi = splitString[0]
-            # print(hemi)
-            outname = "{0}_{1}fwhm".format(filename, blursize)
-        else:
-            sys.exit("ERROR!\n{0} is not .niml.dset format".format(curfile))
+            # run smoothing
+            shell_cmd("SurfSmooth -spec {0}{1}{2}_{3}.spec \
+                                -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}.{6} \
+                                -cmask '-a {5}.{6}[0] -expr bool(a)' {7}-output {8}.{6}"
+                          .format(specprefix, sub, suffix, hemi_dic[hemi], blur_size, cur_name, cur_suffix, detrend_cmd, new_name))
 
-        # move files
-        subprocess.call("3dcopy {1}/{0}.niml.dset {0}.niml.dset".format(filename, curdir), shell=True)
-        print("files moved")
-        # compute mean
-        subprocess.call("SurfSmooth -spec {0}{1}{2}_{3}.spec \
-                    -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}.niml.dset \
-                    -cmask '-a {5}.niml.dset[0] -expr bool(a)' -output  {8}/{7}.niml.dset"
-                        .format(specprefix, subject, suffix, hemi, blursize, filename, tmpdir, outname, outdir),
-                        shell=True)
-        print("mean computed")
+            # Removes output gii file if it exists
+            out_path = "{0}/{1}.{2}".format(dest_dir, new_name, cur_suffix)
+            if os.path.isfile(out_path):
+                os.remove(out_path)
 
+            # copy output file
+            shutil.copyfile("{0}/{1}.{2}".format(tmp_dir, new_name, cur_suffix), out_path)
+            # copy smoothing record file, give more reasonable name
+            shutil.copyfile("{0}/{1}.{2}.1D.smrec".format(tmp_dir, new_name, cur_suffix), "{0}/{1}.smrec.1D".format(dest_dir, new_name, cur_suffix))
+
+        os.chdir(cur_dir)
+        if keep_temp is not True:
+            # remove temporary directory
+            shutil.rmtree(tmp_dir)
 
 def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10,
                 out_dir=None, fs_dir=None, surf_vol='standard', std141=False, keep_temp=False):
@@ -885,7 +920,7 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
             vol_dir = cur_dir
 
     # make temporary copy of volume file     
-    subprocess.call("3dcopy {0}/{1} {2}/{1}".format(vol_dir, vol_file, tmp_dir, vol_file), shell=True)
+    shell_cmd("3dcopy {0}/{1} {2}/{1}".format(vol_dir, vol_file, tmp_dir, vol_file))
 
     # now get specfiles
     if prefix is None:
@@ -914,14 +949,14 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
             sys.exit("ERROR! Hemisphere could not be deduced from: '{0}'."
                      .format(cur_file))
 
-        subprocess.call("3dSurf2Vol -spec {0}{1}{2}_{3}.spec \
+        shell_cmd("3dSurf2Vol -spec {0}{1}{2}_{3}.spec \
                     -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {4} \
                     -sdata {5}.niml.dset -map_func {6} -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
                     -prefix {11}/{5}"
                         .format(specprefix, subject, suffix, hemi, vol_file, file_name, map_func, index, wm_mod, gm_mod,
-                                steps, tmp_dir), shell=True)
+                                steps, tmp_dir))
 
-        subprocess.call("3dcopy {2}/{0}+orig {1}/{0}.nii.gz".format(file_name, out_dir, tmp_dir), shell=True)
+        shell_cmd("3dcopy {2}/{0}+orig {1}/{0}.nii.gz".format(file_name, out_dir, tmp_dir))
 
     os.chdir(cur_dir)
     if keep_temp is not True:
@@ -929,7 +964,7 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
         shutil.rmtree(tmp_dir)
 
 
-def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="standard", forcex=False,
+def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="standard", forcex=False,
                   separate_out=False, keeptemp=False, skipclust=False, intertype="NearestNode",
                   force_new_mapping=False):
     """Function for generating ROIs in subject's native space 
@@ -956,7 +991,7 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
              run. Options: ['Benson','Glasser','Wang','KGS','All']
     atlasdir : string, default None
             The atlas directory, containing ROI template data
-    fsdir : string, default None
+    fs_dir : string, default None
             The freesurfer directory of subjects
     outdir : string, default "standard"
             Output directory
@@ -982,14 +1017,14 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
             - NearestNodeCoords
             - Data
     """
-    if fsdir is None:
+    if fs_dir is None:
         old_subject_dir = os.environ["SUBJECTS_DIR"]
-        fsdir = os.environ["SUBJECTS_DIR"]
+        fs_dir = os.environ["SUBJECTS_DIR"]
     else:
         old_subject_dir = os.environ["SUBJECTS_DIR"]
-        os.environ["SUBJECTS_DIR"] = fsdir
+        os.environ["SUBJECTS_DIR"] = fs_dir
     if atlasdir is None:
-        atlasdir = "{0}/ROI_TEMPLATES".format(fsdir)
+        atlasdir = "{0}/ROI_TEMPLATES".format(fs_dir)
     # is a userinput output directory used?
     if outdir != 'standard':
         outdir_flag = 'custom'
@@ -1026,27 +1061,16 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
     for sub in subjects:  # loop over list of subjects
         print_wrap("Running {0}: {1}".format(sub, confirmation_str))
         # check if subjects' freesurfer directory exists
-        if os.path.isdir("{0}/{1}".format(fsdir, sub)):
-            # no suffix needed
-            suffix = ""
-        elif os.path.isdir("{0}/sub-{1}".format(fsdir, sub)):
-            sub = "sub-{0}".format(sub)
-            suffix = ""
-        else:
-            # suffix needed
-            suffix = "_fs4"
-            if not os.path.isdir("{0}/{1}{2}".format(fsdir, sub, suffix)):
-                sys.exit("ERROR!\nSubject folder {0}/{1} \ndoes not exist, without or with suffix '{2}'."
-                         .format(fsdir, sub, suffix))
-                # check the voxel size is even and res is 1x1x1
-        vox_hdr = nib.load("{0}/{1}{2}/mri/orig.mgz".format(fsdir, sub, suffix)).header
+        suffix = fs_dir_check(fs_dir, sub)
+        # check the voxel size is even and res is 1x1x1
+        vox_hdr = nib.load("{0}/{1}{2}/mri/orig.mgz".format(fs_dir, sub, suffix)).header
         vox_shape = vox_hdr.get_data_shape()
         assert len([shape for shape in vox_shape if shape % 2 != 0]) == 0, 'Voxel Shape incorrect {0}'.format(vox_shape)
         vox_res = vox_hdr.get_zooms()
         assert vox_res == (1.0, 1.0, 1.0), 'Voxel Resolution incorrect: {0}'.format(vox_res)
 
         if outdir_flag != "custom":
-            outdir = "{0}/{1}{2}/TEMPLATE_ROIS".format(fsdir, sub, suffix)
+            outdir = "{0}/{1}{2}/TEMPLATE_ROIS".format(fs_dir, sub, suffix)
         else:
             outdir = "{0}/{1}/TEMPLATE_ROIS".format(outdir, sub, suffix)  # force sub in name, in case multiple subjects
 
@@ -1059,23 +1083,23 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
         os.mkdir(tmpdir + "/SUMA")
 
         # copy relevant freesurfer files & establish surface directory
-        surfdir = "{0}/{1}{2}".format(fsdir, sub, suffix)
+        surfdir = "{0}/{1}{2}".format(fs_dir, sub, suffix)
 
         for file in glob.glob(surfdir + "/surf/*h.white"):
             shutil.copy(file, tmpdir + "/surf")
-        sumadir = "{0}/{1}{2}/SUMA".format(fsdir, sub, suffix)
+        sumadir = "{0}/{1}{2}/SUMA".format(fs_dir, sub, suffix)
 
         # Does SUMA folder exist - if not run @SUMA_Make_Spec_FS -NIFTI -sid subject1
         if not os.path.isdir(sumadir):
             print_wrap('running @SUMA_Make_Spec_FS', indent=1)
-            os.chdir("{0}/{1}{2}".format(fsdir, sub, suffix))
+            os.chdir("{0}/{1}{2}".format(fs_dir, sub, suffix))
             shell_cmd("@SUMA_Make_Spec_FS -NIFTI -sid {0}{1}".format(sub, suffix))
             file_format = "gii"
         else:
             # is SUMA data in .gii or .asc format?
-            if len(glob.glob("{0}/{1}{2}/SUMA/*.asc".format(fsdir, sub, suffix))) > 0:
+            if len(glob.glob("{0}/{1}{2}/SUMA/*.asc".format(fs_dir, sub, suffix))) > 0:
                 file_format = "asc"
-            elif len(glob.glob("{0}/{1}{2}/SUMA/*.gii".format(fsdir, sub, suffix))) > 0:
+            elif len(glob.glob("{0}/{1}{2}/SUMA/*.gii".format(fs_dir, sub, suffix))) > 0:
                 file_format = 'gii'
             else:
                 print_wrap('SUMA Error - no .asc or .gii files located')
@@ -1113,12 +1137,12 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
             if os.path.isdir(surfdir + "/xhemi") is False or forcex is True:
                 print_wrap("doing fsaverage_sym registration", indent=2)
                 # Invert the right hemisphere - currently removed as believed not needed
-                # shell_cmd("xhemireg --s {0}{1}".format(sub,suffix), fsdir,do_print=True)
+                # shell_cmd("xhemireg --s {0}{1}".format(sub,suffix), fs_dir,do_print=True)
                 # register lh to fsaverage sym
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub, suffix), fsdir)
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub, suffix), fs_dir)
                 # mirror-reverse subject rh and register to lh fsaverage_sym
                 # though the right hemisphere is not explicitly listed below, it is implied by --lh --xhemi
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub, suffix), fsdir)
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub, suffix), fs_dir)
             else:
                 print_wrap("skipping fsaverage_sym registration", indent=2)
 
@@ -1132,10 +1156,10 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
                 # resample right and left hemisphere data to symmetric hemisphere
                 shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1} --trgsurfreg {2}.sphere.reg \
                     --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/lh.{5}.{4}.mgh"
-                          .format(sub, suffix, "fsaverage_sym", atlasdir, bdata, outname, tmpdir), fsdir)
+                          .format(sub, suffix, "fsaverage_sym", atlasdir, bdata, outname, tmpdir), fs_dir)
                 shell_cmd("mri_surf2surf --srcsubject {2} --srcsurfreg sphere.reg --trgsubject {0}{1}/xhemi --trgsurfreg {2}.sphere.reg \
                     --hemi lh --sval {3}/{5}/{4}-template-2.5.sym.mgh --tval ./TEMPLATE_ROIS/rh.{5}.{4}.mgh"
-                          .format(sub, suffix, "fsaverage_sym", atlasdir, bdata, outname, tmpdir), fsdir)
+                          .format(sub, suffix, "fsaverage_sym", atlasdir, bdata, outname, tmpdir), fs_dir)
                 # convert to suma
                 for hemi in ["lh", "rh"]:
                     shell_cmd(
@@ -1158,7 +1182,7 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
                 # convert to subjects native space
                 shell_cmd(
                     "mri_surf2surf --srcsubject fsaverage --trgsubject {2}{3} --sval {0}.glassertemp1.mgz --hemi {0} --tval ./TEMPLATE_ROIS/{0}.{1}.mgz"
-                        .format(hemi, outname, sub, suffix), fsdir)
+                        .format(hemi, outname, sub, suffix), fs_dir)
                 # convert mgz to gii
                 shell_cmd("mris_convert -f ./TEMPLATE_ROIS/{0}.{1}.mgz ./surf/{0}.white ./TEMPLATE_ROIS/{0}.{1}.gii"
                           .format(hemi, outname))
@@ -1186,16 +1210,16 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
                 print_wrap("running Wang: {0}:".format(hemi), indent=1)
                 if os.path.isfile(mapfile) and not force_new_mapping:
                     print_wrap("using existing mapping file from SUMA dir", indent=2)
-                    subprocess.call(
+                    shell_cmd(
                         "SurfToSurf -i_{4} ./SUMA/{0}.smoothwm.{3} -i_{4} ./SUMA/std.141.{0}.smoothwm.{3} -output_params {1} -mapfile {2} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
-                            .format(hemi, intertype, mapfile, file_format, surf_to_surf_i), shell=True)
+                            .format(hemi, intertype, mapfile, file_format, surf_to_surf_i))
                     newmap = False
                 else:
                     print_wrap("generating new mapping file", indent=2)
                     newmap = True
-                    subprocess.call(
+                    shell_cmd(
                         "SurfToSurf -i_{3} ./SUMA/{0}.smoothwm.{2} -i_{3} ./SUMA/std.141.{0}.smoothwm.{2} -output_params {1} -dset maxprob_surf_{0}.1D.dset'[1..$]'"
-                            .format(hemi, intertype, file_format, surf_to_surf_i), shell=True)
+                            .format(hemi, intertype, file_format, surf_to_surf_i))
                     # update M2M file name to be more informative and not conflict across hemispheres
                     os.rename("./SurfToSurf.niml.M2M".format(outname, hemi),
                               "./SUMA/{0}{1}.std141_to_native.{2}.niml.M2M".format(sub, suffix, hemi))
@@ -1215,9 +1239,9 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
                 # make a 1D.dset copy using the naming conventions of other rois,
                 # so we can utilize some other script more easily (e.g., roi1_copy_surfrois_locally.sh)
                 # mainly for Kastner lab usage
-                subprocess.call(
+                shell_cmd(
                     "ConvertDset -o_1D -input ./TEMPLATE_ROIS/{0}.{1}.niml.dset -prepend_node_index_1D -prefix ./TEMPLATE_ROIS/{0}.{1}.1D.dset"
-                        .format(hemi, outname), shell=True)
+                        .format(hemi, outname))
 
                 if not skipclust:  # do optional surface-based clustering
                     print_wrap("doing clustering", indent=2)
@@ -1227,13 +1251,13 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
                         surffile = "./SUMA/{0}.smoothwm.{1}".format(hemi, file_format)
 
                         # isolate ROI
-                        subprocess.call(
+                        shell_cmd(
                             "3dcalc -a ./TEMPLATE_ROIS/{2}.{0}.niml.dset -expr 'iszero(a-{1})' -prefix {2}.temp.niml.dset"
-                                .format(outname, idx, hemi), shell=True)
+                                .format(outname, idx, hemi))
                         # do clustering, only consider cluster if they are 1 edge apart
-                        subprocess.call(
+                        shell_cmd(
                             "SurfClust -spec {0} -surf_A {1} -input {2}.temp.niml.dset 0 -rmm -1 -prefix {2}.temp2 -out_fulllist -out_roidset"
-                                .format(specfile, surffile, hemi), shell=True)
+                                .format(specfile, surffile, hemi))
 
                         # pick only biggest cluster
                         if idx is 1:
@@ -1243,13 +1267,13 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
                                                                                                               hemi),
                                     indent=2)
                                 os.remove("./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname, hemi))
-                            subprocess.call(
+                            shell_cmd(
                                 "3dcalc -a {1}.temp2_ClstMsk_e1.niml.dset -expr 'iszero(a-1)*{2}' -prefix {1}.{0}_cluster.niml.dset"
-                                    .format(outname, hemi, idx), shell=True)
+                                    .format(outname, hemi, idx))
                         else:
-                            subprocess.call(
+                            shell_cmd(
                                 "3dcalc -a {1}.temp2_ClstMsk_e1.niml.dset -b {1}.{0}_cluster.niml.dset -expr 'b+iszero(a-1)*{2}' -prefix {1}.temp3.niml.dset"
-                                    .format(outname, hemi, idx), shell=True)
+                                    .format(outname, hemi, idx))
                             # os.remove("./{0}/{1}.{0}_cluster.niml.dset".format(outname, hemi))
                             os.rename("{0}.temp3.niml.dset".format(hemi),
                                       "{1}.{0}_cluster.niml.dset".format(outname, hemi))
@@ -1257,9 +1281,9 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
                         for file in glob.glob("./*temp*"):
                             os.remove(file)
                     # is this step necessary?
-                    subprocess.call(
+                        shell_cmd(
                         "ConvertDset -input {1}.{0}_cluster.niml.dset -o_niml_asc -prefix ./TEMPLATE_ROIS/{1}.temp4.niml.dset"
-                            .format(outname, hemi, idx), shell=True)
+                            .format(outname, hemi, idx))
                     os.remove("{1}.{0}_cluster.niml.dset".format(outname, hemi))
                     os.rename("./TEMPLATE_ROIS/{0}.temp4.niml.dset".format(hemi),
                               "./TEMPLATE_ROIS/{1}.{0}_cluster.niml.dset".format(outname, hemi))
@@ -1308,58 +1332,52 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fsdir=None, outdir="s
                     #   --sval is the file containing the surface data
                     #   --hemi is just the hemisphere we want to surf-over
                     #   --tval is the output file  
-                    subprocess.call("mri_label2label --srcsubject fsaverage --trgsubject {2}{3} --regmethod surface --hemi {0} \
-                        --srclabel {1}/{5}/{0}.MPM_{4}.label --trglabel ./{0}.{4}_TEMP.label".format(hemi, atlasdir,
-                                                                                                     sub, suffix, roi,
-                                                                                                     outname),
-                                    shell=True)
+                    shell_cmd("mri_label2label --srcsubject fsaverage --trgsubject {2}{3} --regmethod surface --hemi {0} \
+                        --srclabel {1}/{5}/{0}.MPM_{4}.label --trglabel ./{0}.{4}_TEMP.label"
+                              .format(hemi, atlasdir, sub, suffix, roi, outname))
 
                     # convert to gifti
-                    subprocess.call(
-                        "mris_convert --label {0}.{1}_TEMP.label {1} ./surf/{0}.white {0}.{1}_TEMP.gii".format(hemi,
-                                                                                                               roi),
-                        shell=True)
+                    shell_cmd(
+                        "mris_convert --label {0}.{1}_TEMP.label {1} ./surf/{0}.white {0}.{1}_TEMP.gii"
+                            .format(hemi,roi))
 
                     # convert to .niml.dset
-                    subprocess.call(
-                        "ConvertDset -o_niml_asc -input {0}.{1}_TEMP.gii -prefix {0}.{1}_TEMP.niml.dset".format(hemi,
-                                                                                                                roi),
-                        shell=True)
+                    shell_cmd(
+                        "ConvertDset -o_niml_asc -input {0}.{1}_TEMP.gii -prefix {0}.{1}_TEMP.niml.dset"
+                            .format(hemi, roi))
 
                     # isolate roi of interest
                     # do clustering, only consider cluster if they are 1 edge apart
-                    subprocess.call("SurfClust -spec ./SUMA/{2}{3}_{0}.spec -surf_A ./SUMA/{0}.smoothwm.{4} -input {0}.{1}_TEMP.niml.dset 0 \
-                        -rmm -1 -prefix {0}.{1}_TEMP2.niml.dset -out_fulllist -out_roidset".format(hemi, roi, sub,
-                                                                                                   suffix, file_format),
-                                    shell=True)
+                    shell_cmd("SurfClust -spec ./SUMA/{2}{3}_{0}.spec -surf_A ./SUMA/{0}.smoothwm.{4} -input {0}.{1}_TEMP.niml.dset 0 \
+                        -rmm -1 -prefix {0}.{1}_TEMP2.niml.dset -out_fulllist -out_roidset"
+                              .format(hemi, roi, sub, suffix, file_format))
 
                     # create mask, pick only biggest cluster
-                    subprocess.call(
-                        "3dcalc -a {0}.{1}_TEMP2_ClstMsk_e1.niml.dset -expr 'iszero(a-1)' -prefix {0}.{1}_TEMP3.niml.dset".format(
-                            hemi, roi), shell=True)
+                    shell_cmd(
+                        "3dcalc -a {0}.{1}_TEMP2_ClstMsk_e1.niml.dset -expr 'iszero(a-1)' -prefix {0}.{1}_TEMP3.niml.dset"
+                            .format(hemi, roi))
 
                     # dilate mask
-                    subprocess.call(
+                    shell_cmd(
                         "ROIgrow -spec ./SUMA/{2}{3}_{0}.spec -surf_A ./SUMA/{0}.smoothwm.{4} -roi_labels {0}.{1}_TEMP3.niml.dset -lim 1 -prefix {0}.{1}_TEMP4"
-                            .format(hemi, roi, sub, suffix, file_format), shell=True)
+                            .format(hemi, roi, sub, suffix, file_format))
 
-                    numnodes = subprocess.check_output("3dinfo -ni {0}.{1}_TEMP3.niml.dset".format(hemi, roi),
-                                                       shell=True)
+                    numnodes = subprocess.check_output("3dinfo -ni {0}.{1}_TEMP3.niml.dset".format(hemi, roi), shell=True)
                     numnodes = numnodes.decode('ascii')
                     numnodes = int(numnodes.rstrip("\n"))
                     numnodes = numnodes - 1
-                    subprocess.call(
+                    shell_cmd(
                         "ConvertDset -o_niml_asc -i_1D -input {0}.{1}_TEMP4.1.1D -prefix {0}.{1}_TEMP4.niml.dset -pad_to_node {2} -node_index_1D {0}.{1}_TEMP4.1.1D[0]"
-                            .format(hemi, roi, numnodes), shell=True)
+                            .format(hemi, roi, numnodes))
 
                     if idx == 1:
-                        subprocess.call(
+                        shell_cmd(
                             "3dcalc -a {0}.{1}_TEMP4.niml.dset -expr 'notzero(a)' -prefix {0}.{2}.niml.dset".format(
-                                hemi, roi, outname), shell=True)
+                                hemi, roi, outname))
                     else:
-                        subprocess.call("3dcalc -a {0}.{1}_TEMP4.niml.dset -b {0}.{2}.niml.dset \
+                        shell_cmd("3dcalc -a {0}.{1}_TEMP4.niml.dset -b {0}.{2}.niml.dset \
                             -expr '(b+notzero(a)*{3})*iszero(and(notzero(b),notzero(a)))' -prefix {0}.{1}_TEMP5.niml.dset".format(
-                            hemi, roi, outname, idx), shell=True)
+                            hemi, roi, outname, idx))
                         shutil.move("{0}.{1}_TEMP5.niml.dset".format(hemi, roi),
                                     "{0}.{1}.niml.dset".format(hemi, outname))
                 shutil.move("{0}.{1}.niml.dset".format(hemi, outname),
@@ -1399,9 +1417,6 @@ def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
     assert any([nT > 0, nS > 0]), "input must be two dimensional"
     sample_rate = 1 / tr
     run_time = tr * nT
-
-    # subprocess.call("3dcalc -float -a {0}+orig -b mean_{0}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {0}.sc+orig"
-    #            .format(file_name), shell=True)
 
     complex_vals = np.fft.rfft(signal, axis=0)
     complex_vals = np.divide(complex_vals[1:, :], nT)
@@ -1480,7 +1495,7 @@ def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
 
 
 def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pre_tr=2, do_scale=True, do_detrend=True,
-                 use_regressors='standard', offset=0, TR=2.0, roilabel=None, fsdir=os.environ["SUBJECTS_DIR"],
+                 use_regressors='standard', offset=0, TR=2.0, roilabel=None, fs_dir=os.environ["SUBJECTS_DIR"],
                  do_scaling=True, report_timing=False):
     """
     region of interest surface data
@@ -1506,7 +1521,7 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
             Repetition Time
     roilabel : Roi label, default None
             Region of Interest label if required
-    fsdir : directory, default os.environ["SUBJECTS_DIR"]
+    fs_dir : directory, default os.environ["SUBJECTS_DIR"]
             Freesurfer directory
 
     Returns
@@ -1576,20 +1591,20 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
         # define roi files
         roi_file = [None, None]
         if roi_type == "wang":
-            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fsdir, sub)
+            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fs_dir, sub)
             roi_file[1] = roi_file[0].replace("lh", "rh")
             roilabel = roi_dic[roi_type]
             newlabel = roi_dic[roi_type + '_newlabel']
         elif roi_type == "benson":
-            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Benson2014.all.gii".format(fsdir, sub)
+            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Benson2014.all.gii".format(fs_dir, sub)
             roi_file[1] = roi_file[0].replace("lh", "rh")
             roilabel = roi_dic['benson']
             newlabel = roilabel
         elif roi_type == "wang+benson":
-            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fsdir, sub)
+            roi_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Wang2015.gii".format(fs_dir, sub)
             roi_file[1] = roi_file[0].replace("lh", "rh")
             eccen_file = [None, None]
-            eccen_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Benson2014.all.gii".format(fsdir, sub)
+            eccen_file[0] = "{0}/sub-{1}/TEMPLATE_ROIS/lh.Benson2014.all.gii".format(fs_dir, sub)
             eccen_file[1] = eccen_file[0].replace("lh", "rh")
             # define roilabel based on ring centers
             ring_incr = 0.25
@@ -2192,7 +2207,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
     return calc_cmd
 
 
-def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
+def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
                  session='all', tasks='All', offset=None, file_type='fsnative', smooth=0, report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
@@ -2204,7 +2219,7 @@ def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', p
     exp_folder : string
         Folder location, required to identify files
         to be used
-    fsdir : string/os file location, default to SUBJECTS_DIR
+    fs_dir : string/os file location, default to SUBJECTS_DIR
         Freesurfer folder directory
     subjects : string/list, Default 'All'
         Options:
@@ -2288,7 +2303,7 @@ def roi_subjects(exp_folder, fsdir=os.environ["SUBJECTS_DIR"], subjects='All', p
                         "Running SubjectAnalysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
             if len(surf_files) > 0:
                 # run RoiSurfData
-                outdata, curnames = roi_get_data(surf_files, roi_type=roi_type, fsdir=fsdir, pre_tr=pre_tr,
+                outdata, curnames = roi_get_data(surf_files, roi_type=roi_type, fs_dir=fs_dir, pre_tr=pre_tr,
                                                  offset=offset)
                 # Define the empty array we want to fill or concatenate together
                 if sub_int == 0:
