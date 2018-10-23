@@ -321,7 +321,6 @@ def get_data_files(target_folder, type=".gii", spec=mri_spec()):
 
     for cur_dir in data_folders:
         file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) if all(y in x for y in spec_str) and x.endswith(type)]
-    assert file_list, "error: no files found with containing {0} and suffix {1}".format(spec_str[0], type)
     return file_list, spec
 
 
