@@ -242,7 +242,6 @@ class fftobject:
             setattr(self, key, [])
         self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
 
-
 # used by roi_group_analysis
 class groupobject:
     def __init__(self, amp=np.zeros((3, 1)), phase=np.zeros((3, 1)), zSNR=0, hotT2=np.zeros((2, 1)),
@@ -262,6 +261,15 @@ class groupobject:
 
 
 ## MAIN FUNCTIONS
+def mri_spec(task=None, session="01", space="suma_native", detrending=False, smoothing=0):
+    out = {}
+    out["task"]=task
+    out["session"] = session
+    out["space"] = space
+    out["detrending"] = detrending
+    out["smoothing"] = smoothing
+    return out
+
 
 def write(path, data):
     with open(path, 'wb') as f:
@@ -274,40 +282,39 @@ def read(path):
     return out
 
 
-def get_data_files(target_folder, type=".gii", spec={}):
+def get_data_files(target_folder, type=".gii", spec=mri_spec()):
     file_list = []
     if isinstance(spec, dict):
-        # data_spec is a dict specifying bids format
-        space = spec.get("space", "suma_native")
-        session = spec.get("session", "01")
-        detrend = spec.get("detrend", False)
-        smoothing = int(spec.get("smoothing", 0))
-        if space in ['suma_std141', 'sumastd141']:
+        # convert dict to mri_spec dictionary
+        spec = mri_spec(**spec)
+        # data_spec is a class specifying bids format
+        if spec["space"] in ['suma_std141', 'sumastd141']:
             spec_str = ["bold_space-sumastd141"]
-        elif space in ['suma_native', 'sumanative']:
+        elif spec["space"] in ['suma_native', 'sumanative']:
             spec_str = ["bold_space-sumanative"]
-        elif space in ['fs_native', 'fsnative']:
+        elif spec["space"] in ['fs_native', 'fsnative']:
             spec_str = ["bold_space-fsnative"]
-        elif space in "T1w":
+        elif spec["space"] in "T1w":
             spec_str = ["bold_space-T1w"]
         else:
-            print_wrap('unknown space {0} provided'.format(space), indent=3)
+            print_wrap('unknown space {0} provided'.format(spec["space"]), indent=3)
             print_wrap('... using fsnative', indent=3)
             spec_str = ["bold_space-fsnative"]
-        if detrend:
+        if spec["detrending"]:
             spec_str.append("detrend")
-        if smoothing > 0:
-            spec_str.append("{0}fwhm".format(smoothing))
+        if spec["smoothing"] > 0:
+            spec_str.append("{0}fwhm".format(spec["smoothing"]))
+        if spec["task"]:
+            spec_str.append("task-{0}".format(spec["task"]))
         # data folders for sessions or just current folder
         data_folders = ["{0}/{1}/func".format(target_folder, s) for s in os.listdir(target_folder) if 'ses' in s]
         if data_folders:
-            if session not in 'all':
-                data_folders = ["{0}/ses-{1}/func".format(target_folder, str(session).zfill(2))]
+            if spec["session"] not in 'all':
+                data_folders = ["{0}/ses-{1}/func".format(target_folder, str(spec["session"]).zfill(2))]
     else:
         if isinstance(spec, str):
-            spec_str = [spec]
-        else:
-            spec_str = spec
+            spec = [spec]
+        spec_str = spec
         data_folders = [target_folder]
 
     assert type in [".nii.gz",".nii",".niml.dset",".gii.gz",".gii"], "unknown data type {0}!".format(type)
@@ -315,7 +322,7 @@ def get_data_files(target_folder, type=".gii", spec={}):
     for cur_dir in data_folders:
         file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) if all(y in x for y in spec_str) and x.endswith(type)]
     assert file_list, "error: no files found with containing {0} and suffix {1}".format(spec_str[0], type)
-    return file_list
+    return file_list, spec
 
 
 def run_suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=False, fs_dir=None):
@@ -736,8 +743,8 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
 
 
 def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
-                data_format="bids", bids_proc="preproc", bids_ses="01", std141=True,
-                blur_size=3.0, detrend=True, prefix=None, out_dir=None, keep_temp=False):
+                data_spec = {"space": "suma_std141"}, data_type=".gii",
+                blur_size=3.0, detrend_smooth=True, prefix=None, out_dir=None, keep_temp=False):
     """
     Function for smoothing surface MRI data
     Supports suma surfaces in native and std141 space,
@@ -761,21 +768,17 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     sub_prefix : str, default: "sub-"
         prefix used for subject data directories
         useful when non-subject folders exist within experiment_dir
-    data_format : str, default: "bids"
-        "bids" indicate that data are stored in bids format,
-        and the "bids_proc" and "bids_ses" will be used to select files
-        currently the only other acceptable inputs are "gii", "gii.gz" and "niml.dset"
-    bids_proc : str, Default "preproc"
-        only used when "data_format" is "bids",
-        specifies the processing stage of the files to use
-    bids_ses : str, Default "01"
-        only used when "data_format" is "bids",
-        specifies the bids sessions to use
-    std141 : Boolean, default False
-        Is subject to be run with standard 141?
+    data_spec: dict, list or str
+        if dict, the data are stored in bids format, and dict contains
+        {'space':'suma_std141', 'task':None, 'session':'01', 'detrend': False, smoothing: 0}
+        note that default parameters are given above.
+        if list or str, non-bids format is assume,
+        and data_spec is a str or list of strs that must be present in input files
+    data_type : str, Default "".gii"
+        file type of input data
     blur_size: int, default 3
         value input to SurfSmooth's '-target_fwhm' parameter
-    detrend : Boolean, default True
+    detrend_smooth : Boolean, default True
         if true, '-detrend_in 2' is added to the SurfSmooth cmd
     out_dir : str, path to output directory, default None
         if not given, smoothed files will be placed in same directory as input files
@@ -798,7 +801,20 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     # Dict to convert between old and new hemisphere notation
     hemi_dic = {'lh': 'L', 'rh': 'R', 'L': 'lh', 'R': 'rh'}
 
-    if detrend:
+    # is it standard or std141
+    std141 = False
+    if isinstance(data_spec, dict):
+        # convert dict to mri_spec object
+        data_spec = mri_spec(**data_spec)
+        if data_spec["space"] in ['suma_std141', 'sumastd141']:
+            std141 = True
+    else:
+        if isinstance(data_spec, str):
+            spec = [data_spec]
+        if any(["std141" in x for x in data_spec]):
+            std141 = True
+
+    if detrend_smooth:
         detrend_cmd = "-detrend_in 2 "
     else:
         detrend_cmd = ""
@@ -807,12 +823,10 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     for sub in subjects:
         if std141:
             print_wrap("Smoothing subject {0}, sumastd141 space, with a {1} fwhm kernel".format(sub, blur_size))
-            in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_format=data_format, space="sumastd141",
-                                bids_proc=bids_proc, bids_ses=bids_ses)
         else:
             print_wrap("Smoothing subject {0}, native space, with a {1} fwhm kernel".format(sub, blur_size))
-            in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_format=data_format, space="sumanative",
-                                bids_proc=bids_proc, bids_ses=bids_ses)
+
+        in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_spec=data_spec, data_type=data_type)
         # make temporary, local folder
         tmp_dir = tmp_dir = make_temp_dir()
 
@@ -2215,7 +2229,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
     return calc_cmd
 
 
-def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
+def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
                  data_spec={}, data_type=".gii", tasks='All', offset=None, report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
@@ -2239,7 +2253,7 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         other options as per RoiSurfData function
     data_spec: dict, list or str
         if dict, the data are stored in bids format, and dict contains
-        {'space':'suma_native', 'session':'01', 'detrend': False, smoothing: 0}
+        {'space':'suma_native', 'task': None, 'session':'01', 'detrend': False, smoothing: 0}
         note that default parameters are given above.
         if list or str, non-bids format is assume,
         and data_spec is a str or list of strs that must be present in input files
@@ -2296,34 +2310,34 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         for sub_int, sub in enumerate(subjects):
             # produce list of files
             if task is "no task":
-                surf_files = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                surf_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
                 if sub_int == 0:
                     print_wrap(
-                        "Running SubjectAnalysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,
+                        "Running subject_analysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,
                                                                                                             offset))
             else:
-                surf_files = [f for f in
-                              get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
-                              if task in f]
+                data_spec["task"] = task
+                surf_files, cur_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
                 if sub_int == 0:
                     print_wrap(
-                        "Running SubjectAnalysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
+                        "Running subject_analysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
             if len(surf_files) > 0:
                 # run RoiSurfData
-                outdata, curnames = roi_get_data(surf_files, roi_type=roi_type, fs_dir=fs_dir, pre_tr=pre_tr,
+                outdata, cur_names = roi_get_data(surf_files, roi_type=roi_type, fs_dir=fs_dir, pre_tr=pre_tr,
                                                  offset=offset)
                 # Define the empty array we want to fill or concatenate together
                 if sub_int == 0:
                     outdata_arr = np.array(outdata, ndmin=2)
-                    roinames = curnames
+                    roi_names = cur_names
+                    out_spec = cur_spec
                 else:
                     outdata_arr = np.concatenate((outdata_arr, np.array(outdata, ndmin=2)), axis=0)
-                    assert roinames == curnames, "roi names do not match across subjects"
-        out_dic[task] = {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roinames,
-                         "space": space}
+                    assert roi_names == cur_names, "roi names do not match across subjects"
+                    assert {**out_spec} == {**cur_spec}, "specs do not match across subjects"
+        out_dic[task] = {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roi_names, **out_spec}
     if report_timing:
         elapsed = time.time() - t
-        print_wrap("SubjectAnalysis complete, took {0} seconds".format(elapsed))
+        print_wrap("subject_analysis complete, took {0} seconds".format(elapsed))
     return out_dic
 
 
