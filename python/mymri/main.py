@@ -2220,7 +2220,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
 
 
 def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
-                 session='all', proc='preproc', tasks='All', offset=None, space='fsnative', smooth=0, report_timing=True):
+                 session='all', proc='preproc', tasks='All', offset=None, space='fsnative', report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -2260,8 +2260,6 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         be 'fsnative','sumanative' or 'sumastd141'
     proc: str, default 'preproc'
         processing stage, bids-style
-    smooth: int, default 0
-        if not zero, load in smoothed data
     Returns
     ------------
     task_dic : dictionary
@@ -2289,7 +2287,7 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         if 'all' in [x.lower() for x in task_list]:
             task_list = []
             for sub in subjects:
-                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), data_format="bids", space=space, bids_proc=proc, bids_ses=session, smooth=smooth)
+                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), data_format="bids", space=space, bids_proc=proc, bids_ses=session)
             task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
@@ -2302,7 +2300,7 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
             # produce list of files
             if task is "no task":
                 surf_files = get_data_files("{0}/{1}".format(exp_folder, sub),
-                                    data_format="bids", space=space, bids_proc=proc, bids_ses=session, smooth=smooth)
+                                    data_format="bids", space=space, bids_proc=proc, bids_ses=session)
                 if sub_int == 0:
                     print_wrap(
                         "Running SubjectAnalysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,
@@ -2310,7 +2308,7 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
             else:
                 surf_files = [f for f in
                               get_data_files("{0}/{1}".format(exp_folder, sub),
-                                     data_format="bids", space=space, bids_proc=proc, bids_ses=session, smooth=smooth)
+                                     data_format="bids", space=space, bids_proc=proc, bids_ses=session)
                               if task in f]
                 if sub_int == 0:
                     print_wrap(
