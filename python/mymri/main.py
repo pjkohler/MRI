@@ -274,44 +274,47 @@ def read(path):
     return out
 
 
-def get_data_files(target_folder, data_format="bids", space='suma_native', bids_proc="preproc", bids_ses='01'):
+def get_data_files(target_folder, type=".gii", spec={}):
     file_list = []
-    # use bids format or not
-    if data_format == "bids":
+    if isinstance(spec, dict):
+        # data_spec is a dict specifying bids format
+        space = spec.get("space", "suma_native")
+        session = spec.get("session", "01")
+        detrend = spec.get("detrend", False)
+        smoothing = int(spec.get("smoothing", 0))
         if space in ['suma_std141', 'sumastd141']:
-            suffix = ["bold_space-sumastd141_{0}.{1}.gii".format(bids_proc, x) for x in ["L", "R"]]
+            spec_str = ["bold_space-sumastd141"]
         elif space in ['suma_native', 'sumanative']:
-            suffix = ["bold_space-sumanative_{0}.{1}.gii".format(bids_proc, x) for x in ["L", "R"]]
+            spec_str = ["bold_space-sumanative"]
         elif space in ['fs_native', 'fsnative']:
-            suffix = ["bold_space-fsnative_{0}.{1}.gii".format(bids_proc, x) for x in ["L", "R"]]
+            spec_str = ["bold_space-fsnative"]
         elif space in "T1w":
-            suffix = ["bold_space-T1w_{0}.nii.gz".format(bids_proc)]
+            spec_str = ["bold_space-T1w"]
         else:
             print_wrap('unknown space {0} provided'.format(space), indent=3)
             print_wrap('... using fsnative', indent=3)
-            suffix = ["bold_space-fsnative_{0}.{1}.gii".format(bids_proc, x) for x in ["L", "R"]]
+            spec_str = ["bold_space-fsnative"]
+        if detrend:
+            spec_str.append("detrend")
+        if smoothing > 0:
+            spec_str.append("{0}fwhm".format(smoothing))
         # data folders for sessions or just current folder
         data_folders = ["{0}/{1}/func".format(target_folder, s) for s in os.listdir(target_folder) if 'ses' in s]
         if data_folders:
-            if bids_ses not in 'all':
-                data_folders = ["{0}/ses-{1}/func".format(target_folder, str(bids_ses).zfill(2))]
-    elif data_format in [".nii.gz", ".nii"]:
-        data_folders = [target_folder]
-        suffix = data_format
-    elif data_format in [".gii.gz", ".gii"]:
-        data_folders = [target_folder]
-        suffix = data_format
+            if session not in 'all':
+                data_folders = ["{0}/ses-{1}/func".format(target_folder, str(session).zfill(2))]
     else:
-        print_wrap("error: unknown format {0}".format(data_format))
-        return file_list
-    for cur_dir in data_folders:
-        if data_format == "bids":
-            file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) for y in suffix if y in x]
+        if isinstance(spec, str):
+            spec_str = [spec]
         else:
-            # search for the space variable directly
-            file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) for y in suffix if
-                          y in x and space in x]
-    assert file_list, "error: no files found with suffix {0}".format(suffix[0])
+            spec_str = spec
+        data_folders = [target_folder]
+
+    assert type in [".nii.gz",".nii",".niml.dset",".gii.gz",".gii"], "unknown data type {0}!".format(type)
+
+    for cur_dir in data_folders:
+        file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) if all(y in x for y in spec_str) and x.endswith(type)]
+    assert file_list, "error: no files found with containing {0} and suffix {1}".format(spec_str[0], type)
     return file_list
 
 
@@ -543,7 +546,7 @@ def pre_scale(in_files, no_dt=False, keep_temp=False):
 
 
 def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
-                data_format="bids", bids_proc="preproc", bids_ses="01",
+                data_spec = {}, data_type = ".nii.gz",
                 std141=False, surf_vol='standard', prefix=None,
                 map_func='ave', wm_mod=0.0, gm_mod=0.0, index='voxels', steps=10, mask=None,
                 keep_temp=False):
@@ -574,17 +577,14 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     sub_prefix: str, default: "sub-"
         prefix used for subject data directories
         useful when non-subject folders exist within experiment_dir
-    data_format: str, default: "bids"
-        "bids" indicate that data are stored in bids format,
-        and the "bids_proc" and "bids_ses" will be used to select files
-        currently the only other acceptable inputs are ".nii" and ".nii.gz"
-        in which case all files with those suffixes will be used
-    bids_proc : str, Default "preproc"
-        only used when "data_format" is "bids",
-        specifies the processing stage of the files to use
-    bids_ses : str, Default "01"
-        only used when "data_format" is "bids",
-        specifies the bids sessions to use
+    data_spec: dict, list or str
+        if dict, the data are stored in bids format, and dict contains
+        {'space':'suma_native', 'session':'01', 'detrend': False, smoothing: 0}
+        note that default parameters are given above.
+        if list or str, non-bids format is assume,
+        and data_spec is a str or list of strs that must be present in input files
+    data_type : str, Default "".nii.gz"
+        file type of input data
     surf_vol : string, default 'standard'
         File location of volume directory/file
     std141 : Boolean, default False
@@ -638,11 +638,7 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         else:
             print_wrap("Running subject {0}, native:".format(sub))
 
-        if data_format == "bids":
-            in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_format="bids", space="T1w",
-                                bids_proc=bids_proc, bids_ses=bids_ses)
-        else:
-            in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_format=data_format)
+        in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), type=data_type, spec=data_spec)
 
         output_name_dic = {}
 
@@ -1656,11 +1652,11 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
     data_n = [None, None]
     for h, hemi in enumerate(["L", "R"]):
         cur_files = data_files[h]
-        smooth_list = [x[x.find('fwhm') - 1] for x in cur_files]
-        assert all(x == smooth_list[0] for x in smooth_list), "error, files have different levels of smooothing"
-        if smooth_list[0] == -1:
+        smooth_list = [x[x.find('fwhm') - 1] for x in cur_files if x.find('fwhm') >= 0]
+        if len(smooth_list) == 0:
             smooth_msg = "unsmoothed"
         else:
+            assert all(x == smooth_list[0] for x in smooth_list), "error, files have different levels of smooothing"
             smooth_msg = "{0}fwhm smoothed".format(smooth_list[0])
         if roi_type == "whole":
             hemi_data = []
@@ -2220,7 +2216,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
 
 
 def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
-                 session='all', proc='preproc', tasks='All', offset=None, space='fsnative', report_timing=True):
+                 data_spec={}, data_type=".gii", tasks='All', offset=None, report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -2241,8 +2237,14 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         input for RoiSurfData - please see for more info
     roi_type : str, default 'wang+benson'
         other options as per RoiSurfData function
-    session : str, default '01'
-        The fmri session
+    data_spec: dict, list or str
+        if dict, the data are stored in bids format, and dict contains
+        {'space':'suma_native', 'session':'01', 'detrend': False, smoothing: 0}
+        note that default parameters are given above.
+        if list or str, non-bids format is assume,
+        and data_spec is a str or list of strs that must be present in input files
+    data_type : str, Default "".nii.gz"
+        file type of input data
     tasks : list/string, default 'All'
         Options: 
             'All' - runs all tasks separately
@@ -2255,11 +2257,6 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         Negative values means the first data frame was 
         shifted backwards relative to stimulus.
         example: {'cont':2,'disp':8,'mot':2}
-    space : str, default 'fsnative'
-        Should files for combined harmonics
-        be 'fsnative','sumanative' or 'sumastd141'
-    proc: str, default 'preproc'
-        processing stage, bids-style
     Returns
     ------------
     task_dic : dictionary
@@ -2287,7 +2284,7 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         if 'all' in [x.lower() for x in task_list]:
             task_list = []
             for sub in subjects:
-                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), data_format="bids", space=space, bids_proc=proc, bids_ses=session)
+                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
             task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
@@ -2299,16 +2296,14 @@ def roi_subjects(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', 
         for sub_int, sub in enumerate(subjects):
             # produce list of files
             if task is "no task":
-                surf_files = get_data_files("{0}/{1}".format(exp_folder, sub),
-                                    data_format="bids", space=space, bids_proc=proc, bids_ses=session)
+                surf_files = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
                 if sub_int == 0:
                     print_wrap(
                         "Running SubjectAnalysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,
                                                                                                             offset))
             else:
                 surf_files = [f for f in
-                              get_data_files("{0}/{1}".format(exp_folder, sub),
-                                     data_format="bids", space=space, bids_proc=proc, bids_ses=session)
+                              get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
                               if task in f]
                 if sub_int == 0:
                     print_wrap(
