@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import argparse, sys, mymri
+import argparse, sys
       
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
@@ -50,4 +50,6 @@ if __name__ == "__main__":
         sys.exit(1)
     args = parser.parse_args()
 
-mymri.Pre(args.infiles, args.ref, args.trdur, args.pre_tr, args.total_tr, args.tfile, args.pad_ap, args.pad_is, args.diffmat, args.keeptemp)
+from mymri import slice_timing
+
+slice_timing(args.infiles, args.ref, args.trdur, args.pre_tr, args.total_tr, args.tfile, args.pad_ap, args.pad_is, args.diffmat, args.keeptemp)

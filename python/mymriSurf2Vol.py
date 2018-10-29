@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import argparse, sys, mymri
+import argparse, sys
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
@@ -47,7 +47,9 @@ if __name__ == "__main__":
         sys.exit(1)
     args = parser.parse_args()
 
-mymri.Surf2Vol(
+from mymri import surf_to_vol
+
+mymri.surf_to_vol(
     subject=args.subject, 
     in_files=args.infiles, 
     map_func=args.mapfunc, 

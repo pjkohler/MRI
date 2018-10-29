@@ -385,7 +385,7 @@ def neuro_to_radio(in_files):
         print_wrap("new orientation: {0}".format(new_orient))
 
 
-def pre_slice(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_file=None, pad_ap=0, pad_is=0,
+def slice_timing(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_time_file=None, pad_ap=0, pad_is=0,
               diff_mat=False, keep_temp=False):
     """
     Function for first stage of preprocessing
@@ -471,7 +471,7 @@ def pre_slice(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slice_t
         shutil.rmtree(tmp_dir)
 
 
-def pre_volreg(in_files, ref_file='last', slow=False, keep_temp=False):
+def vol_reg(in_files, ref_file='last', slow=False, keep_temp=False):
     """
     Function for second stage of preprocessing: Volume registation.
     Typically run following mriPre.py

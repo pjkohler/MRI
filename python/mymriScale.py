@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import argparse, sys, mymri
+import argparse, sys
       
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
@@ -28,5 +28,6 @@ if __name__ == "__main__":
         sys.exit(1)
     args = parser.parse_args()
 
+from mymri import scale
 
-mymri.Scale(in_files=args.infiles, no_dt=args.no_dt, keep_temp=args.keeptemp)
+scale(in_files=args.infiles, no_dt=args.no_dt, keep_temp=args.keeptemp)

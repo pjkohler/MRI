@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-import argparse, sys, mymri    
+import argparse, sys    
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
         " \n"
@@ -34,5 +35,7 @@ if __name__ == "__main__":
         sys.exit(1)
     args = parser.parse_args()
 
-mymri.run_suma(args.subject, args.hemi, args.openvol, args.surfvol, args.std141, args.fsdir)
+from mymri import run_suma
+
+run_suma(args.subject, args.hemi, args.openvol, args.surfvol, args.std141, args.fsdir)
 

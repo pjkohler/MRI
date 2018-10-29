@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import argparse, sys, mymri
+import argparse, sys
       
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=
@@ -30,4 +30,6 @@ if __name__ == "__main__":
         sys.exit(1)
     args = parser.parse_args()
 
-mymri.Volreg(args.infiles, ref_file=args.ref, slow=args.slow, keep_temp=args.keeptemp)
+from mymri import vol_reg
+
+mymri.vol_reg(args.infiles, ref_file=args.ref, slow=args.slow, keep_temp=args.keeptemp)
