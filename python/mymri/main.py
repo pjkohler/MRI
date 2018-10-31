@@ -1,4 +1,4 @@
-import os, subprocess, sys, glob, shutil, tempfile, re, time, textwrap
+import os, subprocess, sys, glob, shutil, tempfile, re, time, textwrap, math
 from nilearn import surface as nl_surf
 from nilearn import signal as nl_signal
 import numpy as np
@@ -87,7 +87,9 @@ def shell_cmd(main_cmd, fs_dir=None, do_print=False):
         main_cmd = "export SUBJECTS_DIR={0}; {1}".format(fs_dir, main_cmd)
     if do_print:
         print(main_cmd + "\n")
-    subprocess.call("{0}".format(main_cmd), shell=True)
+    output = subprocess.check_output("{0}".format(main_cmd),
+                                     shell=True, stderr=subprocess.STDOUT, universal_newlines=True, encoding='utf8')
+    return output
 
 
 def make_temp_dir(top_temp=os.path.expanduser("~/mymri_temp")):
@@ -261,13 +263,14 @@ class groupobject:
 
 
 ## MAIN FUNCTIONS
-def mri_spec(task=None, session="01", space="suma_native", detrending=False, smoothing=0):
+def mri_spec(task=None, session="01", space="suma_native", detrending=False, scaling=False, smoothing=0):
     out = {}
     out["task"]=task
     out["session"] = session
     out["space"] = space
     out["detrending"] = detrending
     out["smoothing"] = smoothing
+    out["scaling"] = scaling
     return out
 
 
@@ -287,6 +290,7 @@ def get_data_files(target_folder, type=".gii", spec=mri_spec()):
     if isinstance(spec, dict):
         # convert dict to mri_spec dictionary
         spec = mri_spec(**spec)
+        not_spec = []
         # data_spec is a class specifying bids format
         if spec["space"] in ['suma_std141', 'sumastd141']:
             spec_str = ["bold_space-sumastd141"]
@@ -296,16 +300,27 @@ def get_data_files(target_folder, type=".gii", spec=mri_spec()):
             spec_str = ["bold_space-fsnative"]
         elif spec["space"] in "T1w":
             spec_str = ["bold_space-T1w"]
+            # if T1w and BIDS, file name must also contain 'preproc'
+            spec_str.append("preproc")
         else:
             print_wrap('unknown space {0} provided'.format(spec["space"]), indent=3)
             print_wrap('... using fsnative', indent=3)
             spec_str = ["bold_space-fsnative"]
+        if spec["scaling"]:
+            spec_str.append("-sc")
+        else:
+            not_spec.append("-sc")
         if spec["detrending"]:
-            spec_str.append("detrend")
+            spec_str.append("-dt")
+        else:
+            not_spec.append("-dt")
         if spec["smoothing"] > 0:
             spec_str.append("{0}fwhm".format(spec["smoothing"]))
+        else:
+            not_spec.append("fwhm")
         if spec["task"]:
             spec_str.append("task-{0}".format(spec["task"]))
+
         # data folders for sessions or just current folder
         data_folders = ["{0}/{1}/func".format(target_folder, s) for s in os.listdir(target_folder) if 'ses' in s]
         if data_folders:
@@ -320,7 +335,10 @@ def get_data_files(target_folder, type=".gii", spec=mri_spec()):
     assert type in [".nii.gz",".nii",".niml.dset",".gii.gz",".gii"], "unknown data type {0}!".format(type)
 
     for cur_dir in data_folders:
-        file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) if all(y in x for y in spec_str) and x.endswith(type)]
+        file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) if
+                      all(y in x for y in spec_str) and
+                      all(z not in x for z in not_spec) and
+                      x.endswith(type)]
     return file_list, spec
 
 
@@ -366,8 +384,7 @@ def run_suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=F
 def neuro_to_radio(in_files):
     for scan in in_files:
         path, name, suffix = mri_parts(scan)
-        old_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True,
-                                             universal_newlines=True)
+        old_orient = shell_cmd("fslorient -getorient {0}".format(scan))
         print_wrap("old orientation: {0}".format(old_orient))
         temp_scan = name + "_temp" + suffix
         shutil.copyfile(scan, temp_scan)
@@ -380,8 +397,7 @@ def neuro_to_radio(in_files):
             shutil.copyfile(temp_scan, scan)
             print_wrap("orientation could not be changed for file {0}".format(scan))
         os.remove(temp_scan)
-        new_orient = subprocess.check_output("fslorient -getorient {0}".format(scan), shell=True,
-                                             universal_newlines=True)
+        new_orient = shell_cmd("fslorient -getorient {0}".format(scan))
         print_wrap("new orientation: {0}".format(new_orient))
 
 
@@ -401,11 +417,11 @@ def slice_timing(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slic
         ref_file = in_files[-1]  # use last as reference
     if tr_dur is 0:
         # TR not given, so compute
-        tr_dur = subprocess.check_output("3dinfo -tr -short {0}".format(ref_file), shell=True)
+        tr_dur = shell_cmd("3dinfo -tr -short {0}".format(ref_file))
         tr_dur = tr_dur.rstrip("\n")
     if total_tr is 0:
         # include all TRs, so get max subbrick value
-        total_tr = subprocess.check_output("3dinfo -nvi -short {0}".format(ref_file), shell=True)
+        total_tr = shell_cmd("3dinfo -nvi -short {0}".format(ref_file))
         total_tr = total_tr.rstrip("\n")
     else:
         # subject has given total number of TRs to include, add preTR to that
@@ -422,8 +438,8 @@ def slice_timing(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slic
         file_name, suffix = mri_parts(cur_file)
 
         # crop and move files
-        cur_total_tr = subprocess.check_output("3dinfo -nvi -short {1}/{0}{2}"
-                                               .format(file_name, cur_dir, suffix), shell=True)
+        cur_total_tr = shell_cmd("3dinfo -nvi -short {1}/{0}{2}"
+                                               .format(file_name, cur_dir, suffix))
         cur_total_tr = cur_total_tr.rstrip("\n")
 
         shell_cmd("3dTcat -prefix {0}+orig {1}/{0}{2}''[{3}..{4}]''"
@@ -509,7 +525,8 @@ def vol_reg(in_files, ref_file='last', slow=False, keep_temp=False):
         shutil.rmtree(tmp_dir)
 
 
-def pre_scale(in_files, no_dt=False, keep_temp=False):
+def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_tr=0, total_tr=0, scale=True, detrend=True,
+                data_spec = {}, bids_regressors="standard", data_type = ".nii.gz", overwrite=False, keep_temp=False):
     """
     Function for third stage of preprocessing: Scaling and Detrending.
     Typically run following mriPre.py and mriVolreg.py 
@@ -519,40 +536,158 @@ def pre_scale(in_files, no_dt=False, keep_temp=False):
     Author: pjkohler, Stanford University, 2016
     """
 
-    # make temporary, local folder
-    cur_dir = os.getcwd()
-    tmp_dir = tmp_dir = make_temp_dir()
-    os.chdir(tmp_dir)
-
-    for cur_file in in_files:
-        temp_path, file_name, suffix = (cur_file)
-
-        # move files
-        shell_cmd("3dcopy {1}/{0}{2} {0}+orig".format(file_name, cur_dir, suffix))
-        # compute mean
-        shell_cmd("3dTstat -prefix mean_{0}+orig {0}+orig".format(file_name))
-        # scale
-        if no_dt:
-            # save scaled data in data folder directly
-            shell_cmd(
-                "3dcalc -float -a {0}+orig -b mean_{0}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {1}/{0}.sc.nii.gz"
-                    .format(file_name, cur_dir))
+    # figure out subjects
+    if not subjects:
+        subjects = [x for x in os.listdir(exp_folder) if
+                    x.find(sub_prefix) == 0 and os.path.isdir(os.path.join(exp_folder, x))]
+    # figure out tasks
+    if tasks is None:
+        tasks = dict.fromkeys(["no task"], [])
+    elif type(tasks) is not dict:
+        if type(tasks) is str:
+            # make it a list
+            task_list = [tasks]
         else:
-            # scale, then detrend and store in data folder
-            shell_cmd(
-                "3dcalc -float -a {0}+orig -b mean_{0}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {0}.sc+orig"
-                    .format(file_name))
-            shell_cmd("3dDetrend -prefix {1}/{0}.sc.dt.nii.gz -polort 2 -vector {1}/motparam.{0}.1D {0}.sc+orig"
-                      .format(file_name, cur_dir))
+            task_list = tasks
+        # if 'all' is in list, do all tasks
+        if 'all' in [x.lower() for x in task_list]:
+            task_list = []
+            for sub in subjects:
+                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+            task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
+            task_list = list(set(task_list))
+        # make_dict and assign pre_tr and offset to dict
+        tasks = dict.fromkeys(task_list, [])
+    for task in tasks.keys():
+        # Iterate over subjects
+        for sub in subjects:
 
-    os.chdir(cur_dir)
-    if keep_temp is not True:
-        # remove temporary directory
-        shutil.rmtree(tmp_dir)
+            # produce list of files
+            if task is "no task":
+                in_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                if len(in_files) == 0:
+                    continue
+                print_wrap("Preprocessing {0} on all tasks".format(sub))
+            else:
+                data_spec["task"] = task
+                in_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                if len(in_files) == 0:
+                    continue
+                print_wrap("Preprocessing {0} on task {1}".format(sub, task))
+
+            # make temporary, local folder
+            cur_dir = os.getcwd()
+            tmp_dir = make_temp_dir()
+            os.chdir(tmp_dir)
+
+            for cur_file in in_files:
+                cur_dir, cur_name, cur_suffix = mri_parts(cur_file)
+                final_suffix = ''
+                if scale:
+                    final_suffix = "{0}-sc".format(final_suffix)
+                if detrend:
+                    final_suffix = "{0}-dt".format(final_suffix)
+                final_file = "{0}/{1}{2}.{3}".format(cur_dir,cur_name,final_suffix,cur_suffix)
+                if os.path.isfile(final_file):
+                    if overwrite:
+                        os.remove(final_file)
+                        print_wrap("Overwriting existing: {0}{1}.{2}".format(cur_name,final_suffix,cur_suffix), indent=1)
+                    else:
+                        print_wrap("Skipping existing: {0}{1}.{2}".format(cur_name,final_suffix,cur_suffix), indent=1)
+                        continue
+                else:
+                    print_wrap("Creating new: {0}{1}.{2}".format(cur_name, final_suffix, cur_suffix), indent=1)
+                # crop and move files
+                cur_total_tr = shell_cmd("3dinfo -nv -short {0}/{1}.{2}"
+                                                       .format(cur_dir, cur_name, cur_suffix))
+                cur_total_tr = int(cur_total_tr.strip("\n"))
+
+                if total_tr > 0:
+                    cur_total_tr = min(cur_total_tr, total_tr + pre_tr)
+
+                print_wrap("pre-tr: {0}, total_tr: {1}".format(pre_tr, cur_total_tr-pre_tr), indent=2)
+
+                new_suffix = ''
+                ## CONCATENATE
+                # subtract one from total tr to account for zero-indexing
+                shell_cmd("3dTcat -prefix {0}+orig {1}/{0}.{2}''[{3}..{4}]''"
+                          .format(cur_name, cur_dir, cur_suffix, pre_tr, cur_total_tr-1))
+                ## SCALE
+                if scale:
+                    # compute mean
+                    shell_cmd("3dTstat -prefix mean_{0}{1}+orig {0}{1}+orig".format(cur_name, new_suffix))
+                    shell_cmd("3dcalc -float -a {0}{1}+orig -b mean_{0}{1}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {0}{1}-sc+orig"
+                        .format(cur_name, new_suffix))
+                    new_suffix = "{0}-sc".format(new_suffix)
+                # DETREND
+                if detrend:
+                    # find confounds
+                    bids_confounds = glob.glob(cur_file.split('bold')[0] + '*confounds*.tsv')
+
+                    if len(bids_confounds) > 0:
+                        # load in bids data
+                        assert len(bids_confounds) == 1, "more than one confound.tsv file found for data file {0}".format(
+                            cur_file)
+                        try:
+                            # load confounds as pandas data frame
+                            df = pd.read_csv(bids_confounds[0], '\t', na_values='n/a')
+                            # drop pre_trs
+                            df = df[pre_tr:cur_total_tr]
+
+                            df_trs = df.values.shape[0]
+                            assert (df_trs == cur_total_tr-pre_tr)
+
+                            # select columns to use as nuisance regressors
+                            if "standard" in bids_regressors:
+                                df = df[['CSF', 'WhiteMatter', 'GlobalSignal', 'FramewiseDisplacement', 'X', 'Y', 'Z', 'RotX',
+                                         'RotY', 'RotZ']]
+                            elif "all" not in bids_regressors:
+                                df = df[bids_regressors]
+                            # fill in missing nuisance values with mean for that variable
+                            for col in df.columns:
+                                if sum(df[col].isnull()) > 0:
+                                    # replacing nan values of each column with its average
+                                    df[col] = df[col].fillna(np.mean(df[col]))
+                                if all([math.isclose(x, 0, abs_tol=1e-09) for x in df[col].values]):
+                                    # drop column if all values are the same
+                                    df = df.drop([col], axis=1)
+                                    print_wrap("Dropping {0}, all values very close to zero".format(col), indent=2)
+                            print_wrap("Detrending, using {0} BIDS confound regressors".format(len(df.columns)), indent=2)
+
+                        except:
+                            print_wrap("Data file: {0}.{1}, failure in handling confound regressors".format(cur_name,cur_suffix))
+
+                        confounds_file = "{0}/motparam.{1}.1D".format(tmp_dir, cur_name)
+                        df.to_csv(confounds_file, sep=' ', index=False, header=False, float_format="%.5f" )
+                    else:
+                        # not so great way to find afni motparams for now
+                        afni_confounds = [x for x in os.path.os.listdir(cur_dir) if
+                                         x.endswith(".1D") and "motparam" in x and cur_name in x]
+                        assert len(afni_confounds) > 0, "no bids confounds and no matching motparam 1D file found for data file {0}{1}".format(cur_name, cur_suffix)
+                        assert len(afni_confounds) == 1, "more than one matching motparam 1D file found for data file {0}{1}".format(
+                            cur_name, cur_suffix)
+
+                        confounds_file = afni_confounds[0]
+                        shutil.copyfile("{0}/{1}".format(cur_dir, confounds_file),"{0}/{1}".format(tmp_dir,confounds_file))
+                        if cur_file == in_files[0]:
+                            print_wrap("Detrending, using AFNI confound regressors in file {0}".format(confounds_file), indent=2)
+
+                    shell_cmd("3dDetrend -prefix {0}{1}-dt+orig -polort 2 -vector {2} {0}{1}+orig"
+                          .format(cur_name, new_suffix, confounds_file))
+                    new_suffix = "{0}-dt".format(new_suffix)
+
+                    # MOVE FILES BACK
+                    assert final_file == "{3}/{0}{1}.{2}".format(cur_name, new_suffix, cur_suffix, cur_dir), "something's wrong, final file does not match suffix"
+                    shell_cmd("3dAFNItoNIFTI -prefix {0} {1}{2}+orig".format(final_file, cur_name, new_suffix))
+
+            os.chdir(cur_dir)
+            if keep_temp is not True:
+                # remove temporary directory
+                shutil.rmtree(tmp_dir)
 
 
 def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
-                data_spec = {}, data_type = ".nii.gz",
+                data_spec = {}, data_type = ".nii.gz", overwrite=False,
                 std141=False, surf_vol='standard', prefix=None,
                 map_func='ave', wm_mod=0.0, gm_mod=0.0, index='voxels', steps=10, mask=None,
                 keep_temp=False):
@@ -571,7 +706,7 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     Updated : fhethomas, 2018
     
     Parameters
-    ------------
+    ------------f
     experiment_dir : string
         The directory for the fmri data for the experiment
         Example: '/Volumes/Computer/Users/Username/Experiment/fmriprep'
@@ -644,12 +779,12 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         else:
             print_wrap("Running subject {0}, native:".format(sub))
 
-        in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), type=data_type, spec=data_spec)
+        in_files, out_spec = get_data_files("{0}/{1}".format(experiment_dir, sub), type=data_type, spec=data_spec)
 
         output_name_dic = {}
 
         # make temporary, local folder
-        tmp_dir = tmp_dir = make_temp_dir()
+        tmp_dir = make_temp_dir()
 
         # check if subjects' SUMA directory exists
         suffix = fs_dir_check(fs_dir, sub)
@@ -677,8 +812,6 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
             prefix = ".std.141{0}".format(prefix)
         else:
             specprefix = ""
-            # copy Suma files into the temporary directory
-        copy_suma_files(suma_dir, tmp_dir, sub, spec_prefix=specprefix)
 
         if wm_mod is not 0.0 or gm_mod is not 0.0:
             # for gm, positive values makes the distance longer, for wm negative values
@@ -686,21 +819,34 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
 
         print_wrap("MAPPING: WMOD: {0} GMOD: {1} STEPS: {2}".format(wm_mod, gm_mod, steps), indent=1)
 
+        os.chdir(tmp_dir)
+
+        suma_copied = False
         for cur_file in in_files:
             cur_path, cur_name, cur_suffix = mri_parts(cur_file)
             if std141 == False:
                 new = 'space-sumanative_'
             else:
                 new = 'space-sumastd141_'
-            if data_format == "bids":
+            if isinstance(data_spec, dict):
                 old = re.findall('space-\w+_', cur_name)[0]
                 output_name_dic[cur_name] = cur_name.replace(old, new)
             else:
                 output_name_dic[cur_name] = '{0}_{1}'.format(cur_name, new)
 
-            os.chdir(tmp_dir)
-            # unzip the .nii.gz files into .nii files
-            shell_cmd("gunzip -c {0}/{1}.nii.gz > {2}/{1}.nii".format(cur_path, cur_name, tmp_dir), do_print=False)
+            if all([os.path.isfile("{0}/{1}.{2}.gii".format(cur_path, output_name_dic[cur_name], x)) for x in ['L','R']]):
+                if overwrite:
+                    print_wrap("Overwriting already converted file ...", indent=1)
+                else:
+                    print_wrap("Skipping already converted file ...", indent=1)
+                    continue
+            if not suma_copied:
+                # copy suma files into the temporary directory
+                copy_suma_files(suma_dir, tmp_dir, sub, spec_prefix=specprefix)
+                suma_copied = True
+
+            shutil.copyfile(cur_file, "{0}.{1}".format(cur_name, cur_suffix))
+
             if mask is None:
                 # no mask
                 maskcode = ""
@@ -719,10 +865,10 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
                 output_name = "{0}.{1}".format(output_name_dic[cur_name], hemi_dic[hemi])
                 # Converts volume to surface space - output in .niml.dset
                 shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
-                        -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.nii -map_func {6} \
-                        -f_index {7} -f_p1_fr {8} -f_pn_fr {9} -f_steps {10} \
-                        -outcols_NSD_format -oob_value -0 {11}-out_niml {12}/{13}.niml.dset"
-                          .format(specprefix, sub, suffix, hemi, vol_file, cur_name, map_func, index, wm_mod,
+                        -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.{6} -map_func {7} \
+                        -f_index {8} -f_p1_fr {9} -f_pn_fr {10} -f_steps {11} \
+                        -outcols_NSD_format -oob_value -0 {12}-out_niml {13}/{14}.niml.dset"
+                          .format(specprefix, sub, suffix, hemi, vol_file, cur_name, cur_suffix, map_func, index, wm_mod,
                                   gm_mod, steps, maskcode, tmp_dir, output_name), do_print=False)
                 # Removes output gii file if it exists
                 out_path = "{0}/{1}.gii".format(cur_path, output_name)
@@ -1381,8 +1527,7 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, outdir="
                         "ROIgrow -spec ./SUMA/{2}{3}_{0}.spec -surf_A ./SUMA/{0}.smoothwm.{4} -roi_labels {0}.{1}_TEMP3.niml.dset -lim 1 -prefix {0}.{1}_TEMP4"
                             .format(hemi, roi, sub, suffix, file_format))
 
-                    numnodes = subprocess.check_output("3dinfo -ni {0}.{1}_TEMP3.niml.dset".format(hemi, roi),
-                                                       shell=True)
+                    numnodes = shell_cmd("3dinfo -ni {0}.{1}_TEMP3.niml.dset".format(hemi, roi))
                     numnodes = numnodes.decode('ascii')
                     numnodes = int(numnodes.rstrip("\n"))
                     numnodes = numnodes - 1
@@ -2228,7 +2373,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
     return calc_cmd
 
 
-def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', pre_tr=0, roi_type='wang+benson',
+def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', roi_type='wang+benson',
                  data_spec={}, data_type=".gii", tasks='All', offset=None, report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
