@@ -526,7 +526,7 @@ def vol_reg(in_files, ref_file='last', slow=False, keep_temp=False):
 
 
 def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_tr=0, total_tr=0, scale=True, detrend=True,
-                data_spec = {}, bids_regressors="standard", data_type = ".nii.gz", overwrite=False, keep_temp=False):
+                data_spec = {}, bids_regressors="standard", in_format = ".nii.gz", overwrite=False, keep_temp=False):
     """
     Function for third stage of preprocessing: Scaling and Detrending.
     Typically run following mriPre.py and mriVolreg.py 
@@ -553,7 +553,7 @@ def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_
         if 'all' in [x.lower() for x in task_list]:
             task_list = []
             for sub in subjects:
-                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
             task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
@@ -564,13 +564,13 @@ def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_
 
             # produce list of files
             if task is "no task":
-                in_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                in_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
                 if len(in_files) == 0:
                     continue
                 print_wrap("Preprocessing {0} on all tasks".format(sub))
             else:
                 data_spec["task"] = task
-                in_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                in_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
                 if len(in_files) == 0:
                     continue
                 print_wrap("Preprocessing {0} on task {1}".format(sub, task))
@@ -687,7 +687,7 @@ def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_
 
 
 def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
-                data_spec = {}, data_type = ".nii.gz", overwrite=False,
+                data_spec = {}, in_format = "nii.gz", out_format="gii", overwrite=False,
                 std141=False, surf_vol='standard', prefix=None,
                 map_func='ave', wm_mod=0.0, gm_mod=0.0, index='voxels', steps=10, mask=None,
                 keep_temp=False):
@@ -724,8 +724,10 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         note that default parameters are given above.
         if list or str, non-bids format is assume,
         and data_spec is a str or list of strs that must be present in input files
-    data_type : str, Default "".nii.gz"
+    in_format : str, Default "".nii.gz"
         file type of input data
+    out_format : str, Default "".gii"
+        file type of output data
     surf_vol : string, default 'standard'
         File location of volume directory/file
     std141 : Boolean, default False
@@ -779,7 +781,7 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         else:
             print_wrap("Running subject {0}, native:".format(sub))
 
-        in_files, out_spec = get_data_files("{0}/{1}".format(experiment_dir, sub), type=data_type, spec=data_spec)
+        in_files, out_spec = get_data_files("{0}/{1}".format(experiment_dir, sub), type=in_format, spec=data_spec)
 
         output_name_dic = {}
 
@@ -834,7 +836,7 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
             else:
                 output_name_dic[cur_name] = '{0}_{1}'.format(cur_name, new)
 
-            if all([os.path.isfile("{0}/{1}.{2}.gii".format(cur_path, output_name_dic[cur_name], x)) for x in ['L','R']]):
+            if all([os.path.isfile("{0}/{1}.{2}.{3}".format(cur_path, output_name_dic[cur_name], x, out_format)) for x in ['L','R']]):
                 if overwrite:
                     print_wrap("Overwriting already converted file ...", indent=1)
                 else:
@@ -867,17 +869,17 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
                 shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
                         -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.{6} -map_func {7} \
                         -f_index {8} -f_p1_fr {9} -f_pn_fr {10} -f_steps {11} \
-                        -outcols_NSD_format -oob_value -0 {12}-out_niml {13}/{14}.niml.dset"
+                        -outcols_NSD_format -oob_value -0 {12}-out_niml {13}/{14}.{15}"
                           .format(specprefix, sub, suffix, hemi, vol_file, cur_name, cur_suffix, map_func, index, wm_mod,
-                                  gm_mod, steps, maskcode, tmp_dir, output_name), do_print=False)
+                                  gm_mod, steps, maskcode, tmp_dir, output_name, out_format), do_print=False)
                 # Removes output gii file if it exists
-                out_path = "{0}/{1}.gii".format(cur_path, output_name)
+                out_path = "{0}/{1}.{2}".format(cur_path, output_name, out_format)
                 if os.path.isfile(out_path):
                     os.remove(out_path)
-                # Converts the .niml.dset into a .gii file in the functional directory
-                shell_cmd("ConvertDset -o_gii_b64 -input {1}/{0}.niml.dset -prefix {2}/{0}.gii"
-                          .format(output_name, tmp_dir, cur_path), do_print=False)
-                file_list.append('{1}/{0}'.format(output_name, cur_path))
+
+                # copy output file
+                shutil.copyfile("{0}/{1}.{2}".format(tmp_dir, output_name, out_format), out_path)
+                file_list.append('{0}/{1}'.format(out_path))
 
         os.chdir(cur_path)
         if keep_temp is not True:
@@ -888,8 +890,8 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
 
 
 def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
-                data_spec = {"space": "suma_std141"}, data_type=".gii",
-                blur_size=3.0, detrend_smooth=True, prefix=None, out_dir=None, keep_temp=False):
+                data_spec = {"space": "suma_std141"}, in_format="gii", out_format = "gii", overwrite=False,
+                blur_size=3.0, detrend_smooth=False, prefix=None, out_dir=None, keep_temp=False):
     """
     Function for smoothing surface MRI data
     Supports suma surfaces in native and std141 space,
@@ -919,8 +921,10 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         note that default parameters are given above.
         if list or str, non-bids format is assume,
         and data_spec is a str or list of strs that must be present in input files
-    data_type : str, Default "".gii"
-        file type of input data
+    in_format : str, Default "".gii"
+        file format of input data
+    out_format : str, Default "".gii"
+        file format of output data
     blur_size: int, default 3
         value input to SurfSmooth's '-target_fwhm' parameter
     detrend_smooth : Boolean, default True
@@ -953,12 +957,13 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         data_spec = mri_spec(**data_spec)
         if data_spec["space"] in ['suma_std141', 'sumastd141']:
             std141 = True
+        bids_format = True
     else:
         if isinstance(data_spec, str):
             spec = [data_spec]
         if any(["std141" in x for x in data_spec]):
             std141 = True
-
+        bids_format = False
     if detrend_smooth:
         detrend_cmd = "-detrend_in 2 "
     else:
@@ -971,35 +976,13 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         else:
             print_wrap("Smoothing subject {0}, native space, with a {1} fwhm kernel".format(sub, blur_size))
 
-        in_files = get_data_files("{0}/{1}".format(experiment_dir, sub), data_spec=data_spec, data_type=data_type)
-        # make temporary, local folder
-        tmp_dir = tmp_dir = make_temp_dir()
+        in_files, out_spec = get_data_files("{0}/{1}".format(experiment_dir, sub), spec=data_spec, type=in_format)
 
-        # check if subjects' SUMA directory exists
-        suffix = fs_dir_check(fs_dir, sub)
-        suma_dir = "{0}/{1}{2}/SUMA".format(fs_dir, sub, suffix)
-
-        # now get specfiles
-        if prefix is None:
-            prefix = "."
-        else:
-            prefix = ".{0}.".format(prefix)
-
-        if std141:
-            specprefix = "std.141."
-            prefix = ".std.141{0}".format(prefix)
-        else:
-            specprefix = ""
-            # copy Suma files into the temporary directory
-        copy_suma_files(suma_dir, tmp_dir, sub, spec_prefix=specprefix)
-
+        suma_copied = False
         for cur_file in in_files:
             cur_dir, cur_name, cur_suffix = mri_parts(cur_file)
-            if out_dir:
-                dest_dir = out_dir
-            else:
-                dest_dir = cur_dir
-            if data_format == "bids":
+
+            if bids_format:
                 processing = cur_name.split("_")[-1]
                 hemi = processing.split(".")[-1]
                 processing = processing.split(".")[0]
@@ -1014,7 +997,39 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
                     return
                 new_name = '{0}-{1}fwhm'.format(cur_name, blur_size)
 
-            os.chdir(tmp_dir)
+            if out_dir:
+                cur_dir = out_dir
+
+            if os.path.isfile("{0}/{1}.{2}".format(cur_dir, new_name, out_format)):
+                if overwrite:
+                    print_wrap("Overwriting already converted file ...", indent=1)
+                else:
+                    print_wrap("Skipping already converted file ...", indent=1)
+                    continue
+            if not suma_copied:
+                # make temporary, local folder
+                tmp_dir = make_temp_dir()
+
+                # check if subjects' SUMA directory exists
+                suffix = fs_dir_check(fs_dir, sub)
+                suma_dir = "{0}/{1}{2}/SUMA".format(fs_dir, sub, suffix)
+
+                # now get specfiles
+                if prefix is None:
+                    prefix = "."
+                else:
+                    prefix = ".{0}.".format(prefix)
+
+                if std141:
+                    specprefix = "std.141."
+                    prefix = ".std.141{0}".format(prefix)
+                else:
+                    specprefix = ""
+                    # copy Suma files into the temporary directory
+                copy_suma_files(suma_dir, tmp_dir, sub, spec_prefix=specprefix)
+
+                os.chdir(tmp_dir)
+                suma_copied = True
 
             # copy input file
             shutil.copyfile(cur_file, "{0}.{1}".format(cur_name, cur_suffix))
@@ -1023,19 +1038,19 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
             shell_cmd("SurfSmooth -spec {0}{1}{2}_{3}.spec \
                                 -surf_A smoothwm -met HEAT_07 -target_fwhm {4} -input {5}.{6} \
                                 -cmask '-a {5}.{6}[0] -expr bool(a)' {7}-output {8}.{6}"
-                      .format(specprefix, sub, suffix, hemi_dic[hemi], blur_size, cur_name, cur_suffix, detrend_cmd,
+                      .format(specprefix, sub, suffix, hemi_dic[hemi], blur_size, cur_name, out_format, detrend_cmd,
                               new_name))
 
             # Removes output gii file if it exists
-            out_path = "{0}/{1}.{2}".format(dest_dir, new_name, cur_suffix)
+            out_path = "{0}/{1}.{2}".format(cur_dir, new_name, out_format)
             if os.path.isfile(out_path):
                 os.remove(out_path)
 
             # copy output file
-            shutil.copyfile("{0}/{1}.{2}".format(tmp_dir, new_name, cur_suffix), out_path)
+            shutil.copyfile("{0}/{1}.{2}".format(tmp_dir, new_name, out_format), out_path)
             # copy smoothing record file, give more reasonable name
-            shutil.copyfile("{0}/{1}.{2}.1D.smrec".format(tmp_dir, new_name, cur_suffix),
-                            "{0}/{1}.smrec.1D".format(dest_dir, new_name, cur_suffix))
+            shutil.copyfile("{0}/{1}.{2}.1D.smrec".format(tmp_dir, new_name, out_format),
+                            "{0}/{1}.smrec.1D".format(cur_dir, new_name))
 
         os.chdir(cur_dir)
         if keep_temp is not True:
@@ -2374,7 +2389,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
 
 
 def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', roi_type='wang+benson',
-                 data_spec={}, data_type=".gii", tasks='All', offset=None, report_timing=True):
+                 data_spec={}, in_format=".gii", tasks='All', offset=None, report_timing=True):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -2401,7 +2416,7 @@ def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='Al
         note that default parameters are given above.
         if list or str, non-bids format is assume,
         and data_spec is a str or list of strs that must be present in input files
-    data_type : str, Default "".nii.gz"
+    in_format : str, Default "".nii.gz"
         file type of input data
     tasks : list/string, default 'All'
         Options: 
@@ -2442,7 +2457,7 @@ def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='Al
         if 'all' in [x.lower() for x in task_list]:
             task_list = []
             for sub in subjects:
-                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
             task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
@@ -2454,14 +2469,14 @@ def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='Al
         for sub_int, sub in enumerate(subjects):
             # produce list of files
             if task is "no task":
-                surf_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                surf_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
                 if sub_int == 0:
                     print_wrap(
                         "Running subject_analysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,
                                                                                                             offset))
             else:
                 data_spec["task"] = task
-                surf_files, cur_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=data_type, spec=data_spec)
+                surf_files, cur_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
                 if sub_int == 0:
                     print_wrap(
                         "Running subject_analysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
