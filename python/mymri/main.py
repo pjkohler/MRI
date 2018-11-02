@@ -783,7 +783,7 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
 
         in_files, out_spec = get_data_files("{0}/{1}".format(experiment_dir, sub), type=in_format, spec=data_spec)
 
-        output_name_dic = {}
+        output_list = []
 
         # make temporary, local folder
         tmp_dir = make_temp_dir()
@@ -832,11 +832,11 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
                 new = 'space-sumastd141_'
             if isinstance(data_spec, dict):
                 old = re.findall('space-\w+_', cur_name)[0]
-                output_name_dic[cur_name] = cur_name.replace(old, new)
+                output_name = cur_name.replace(old, new)
             else:
-                output_name_dic[cur_name] = '{0}_{1}'.format(cur_name, new)
+                output_name = '{0}_{1}'.format(cur_name, new)
 
-            if all([os.path.isfile("{0}/{1}.{2}.{3}".format(cur_path, output_name_dic[cur_name], x, out_format)) for x in ['L','R']]):
+            if all([os.path.isfile("{0}/{1}.{2}.{3}".format(cur_path, output_name, x, out_format)) for x in ['L','R']]):
                 if overwrite:
                     print_wrap("Overwriting already converted file ...", indent=1)
                 else:
@@ -864,22 +864,35 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
                     shell_cmd("3dcopy {0} mask+orig".format(mask_path, mask_name, mask_suffix))
                     maskcode = "-cmask '-a mask+orig[0] -expr notzero(a)' "
             for hemi in ["lh", "rh"]:
-                output_name = "{0}.{1}".format(output_name_dic[cur_name], hemi_dic[hemi])
+                niml_file = "{0}.{1}.niml.dset".format(output_name, hemi_dic[hemi])
                 # Converts volume to surface space - output in .niml.dset
                 shell_cmd("3dVol2Surf -spec {0}{1}{2}_{3}.spec \
                         -surf_A smoothwm -surf_B pial -sv {4} -grid_parent {5}.{6} -map_func {7} \
                         -f_index {8} -f_p1_fr {9} -f_pn_fr {10} -f_steps {11} \
-                        -outcols_NSD_format -oob_value -0 {12}-out_niml {13}/{14}.{15}"
+                        -outcols_NSD_format -oob_value -0 {12}-out_niml {13}/{14}"
                           .format(specprefix, sub, suffix, hemi, vol_file, cur_name, cur_suffix, map_func, index, wm_mod,
-                                  gm_mod, steps, maskcode, tmp_dir, output_name, out_format), do_print=False)
-                # Removes output gii file if it exists
-                out_path = "{0}/{1}.{2}".format(cur_path, output_name, out_format)
-                if os.path.isfile(out_path):
-                    os.remove(out_path)
+                                  gm_mod, steps, maskcode, tmp_dir, niml_file), do_print=False)
+                # this section should probably be made into a function, used all over
+                if "niml.dset" in out_format:
+                    output_file = niml_file
+                elif "gii.gz" in out_format:
+                    output_file = "{0}.{1}.{2}".format(output_name, hemi_dic[hemi], out_format)
+                    shell_cmd("ConvertDset -o_gii_b64gz -input {0} -prefix {1}".format(niml_file, output_file))
+                else:
+                    output_file = "{0}.{1}.{2}".format(output_name, hemi_dic[hemi], out_format)
+                    shell_cmd("ConvertDset -o_gii_b64 -input {0} -prefix {1}".format(niml_file, output_file))
+                output_list.append(output_file)
 
-                # copy output file
-                shutil.copyfile("{0}/{1}.{2}".format(tmp_dir, output_name, out_format), out_path)
-                file_list.append('{0}/{1}'.format(out_path))
+        for o in output_list:
+            print_wrap("... moving files ...", indent=2)
+            # Removes output gii file if it exists
+            o_path = "{0}/{1}".format(cur_path, o)
+            if os.path.isfile(o_path):
+                os.remove(o_path)
+
+            # copy output file
+            shutil.copyfile("{0}/{1}".format(tmp_dir, o), o_path)
+            file_list.append(o_path)
 
         os.chdir(cur_path)
         if keep_temp is not True:
@@ -1675,9 +1688,8 @@ def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
         noise_amp=noise_amp, noise_phase=noise_phase, noise_complex=noise_complex)
 
 
-def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pre_tr=2, do_scale=True, do_detrend=True,
-                 use_regressors='standard', offset=0, TR=2.0, roilabel=None, fs_dir=os.environ["SUBJECTS_DIR"],
-                 do_scaling=True, report_timing=False):
+def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pre_tr=0, do_scale=False, do_detrend=False,
+                 use_regressors='standard', offset=0, TR=2.0, roilabel=None, fs_dir=os.environ["SUBJECTS_DIR"], report_timing=False):
     """
     region of interest surface data
     
@@ -2389,7 +2401,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
 
 
 def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', roi_type='wang+benson',
-                 data_spec={}, in_format=".gii", tasks='All', offset=None, report_timing=True):
+                 data_spec={}, in_format=".gii", tasks='All', offset=0, report_timing=True, pre_tr=0):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -2461,11 +2473,13 @@ def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='Al
             task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
-        tasks = dict.fromkeys(task_list, [pre_tr, offset])
+        tasks = dict.fromkeys(task_list, [])
     for task in tasks.keys():
-        pre_tr = tasks[task][0]
-        offset = tasks[task][1]
-
+        # dictionary takes precedence
+        if "offset" in tasks[task].keys():
+            offset = tasks[task]["offset"]
+        if "pre_tr" in tasks[task].keys():
+            pre_tr = tasks[task]["pre_tr"]
         for sub_int, sub in enumerate(subjects):
             # produce list of files
             if task is "no task":
@@ -2481,7 +2495,7 @@ def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='Al
                     print_wrap(
                         "Running subject_analysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
             if len(surf_files) > 0:
-                # run RoiSurfData
+                # run roi_get_data
                 outdata, cur_names = roi_get_data(surf_files, roi_type=roi_type, fs_dir=fs_dir, pre_tr=pre_tr,
                                                  offset=offset)
                 # Define the empty array we want to fill or concatenate together
