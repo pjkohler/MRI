@@ -116,6 +116,7 @@ def fft_offset(complex_in, offset_rad):
     phase = np.angle(complex_in)
     # subtract offset from phase
     phase = phase - offset_rad
+    # let phase vary between -pi and pi
     phase = (phase + np.pi) % (2 * np.pi) - np.pi
     # convert back to complex
     complex_out = np.mean(np.absolute(amp) * np.exp(1j * phase), keepdims=True, axis=0)
@@ -2196,6 +2197,11 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
 
     phaseBounds = np.array([min(phaseEllipseExtremes), max(phaseEllipseExtremes)])
     phase_mean = np.arctan2(mean_xy[1], mean_xy[0]) * convFactor[return_rad]
+
+    # invert phase, so that positive values indicate rightward shift,
+    # and negative indicate leftward shift, relative to the cosine
+    phase_mean = phase_mean * -1
+    # unwrap negative phases
     if phase_mean < 0:
         phase_mean = phase_mean + unwrap_factor[return_rad]
 
@@ -2546,8 +2552,14 @@ def whole_group(subject_data, harmonic_list=['1'], return_rad=True):
 
                 group_out[:, h * 4, r] = np.abs(real_data + 1j * imag_data)
                 phase_mean = np.angle(real_data + 1j * imag_data, not return_rad)
-                # unwrap negative phases   
+
+                # invert phase, so that positive values indicate rightward shift,
+                # and negative indicate leftward shift, relative to the cosine
+                phase_mean = phase_mean * -1
+
+                # unwrap negative phases
                 phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + unwrap_factor[int(return_rad)]
+
                 group_out[:, h * 4 + 1, r] = phase_mean
 
                 # compute Hotelling's T-squared:
