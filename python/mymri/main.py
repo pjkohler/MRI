@@ -2703,7 +2703,7 @@ def roi_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM
             sub_count = np.count_nonzero(~np.isnan(temp_cycle), axis=0)
             cur_cycle_stderr = np.array(np.divide(np.nanstd(temp_cycle, axis=0), np.sqrt(sub_count)), ndmin=2)
 
-            cur_obj = {"stats": stats_df, "cycle_ave": cur_cycle_ave, "cycle_err": cur_cycle_stderr, "roi_name"=roi_names[r]}
+            cur_obj = {"stats": stats_df, "cycle_ave": cur_cycle_ave, "cycle_err": cur_cycle_stderr, "roi_name":roi_names[r]}
             if r == 0:
                 group_out = np.array(cur_obj, ndmin=1)
             else:
