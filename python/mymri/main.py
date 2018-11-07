@@ -257,24 +257,6 @@ class fftobject:
             setattr(self, key, [])
         self.__dict__.update((k, v) for k, v in kwargs.items() if k in allowed_keys)
 
-# used by roi_group_analysis
-class groupobject:
-    def __init__(self, amp=np.zeros((3, 1)), phase=np.zeros((3, 1)), zSNR=0, hotT2=np.zeros((2, 1)),
-                 cycle=np.zeros((2, 12)), harmonics="1", roi_name="unknown"):
-        self.amp = amp
-        self.phase = phase
-        self.zSNR = zSNR
-        self.hotT2 = hotT2
-        self.cycle_average = cycle[0,]
-        dim1, dim2 = np.shape(cycle)
-        if dim1 == 2:
-            self.cycle_err = cycle[1,]
-        else:
-            self.cycle_err = []
-        self.roi_name = roi_name
-        self.harmonics = harmonics
-
-
 ## MAIN FUNCTIONS
 def mri_spec(task=None, session="01", space="suma_native", detrending=False, scaling=False, smoothing=0):
     out = {}
@@ -2060,6 +2042,59 @@ def hotelling_t2(in_vals, alpha=0.05, test_mu=np.zeros((1, 1), dtype=np.complex)
         p_val = 1 - scp.stats.f.cdf(tsqrd * (1 / mult_factor), df1, df2);
     return (tsqrd, p_val, t_crit)
 
+def vector_projection(xydata=np.zeros((20,2)), test_fig=False):
+    # project_amp, project_err, project_test, project_real, project_imag = vector_projection(real_in, imag_in, test_fig=False)
+    if not xydata[0]:
+        test_angle = np.ones((20,1)) * np.random.rand()*2*np.pi-np.pi
+        test_angle = test_angle + (np.random.rand(20,1) * 1 / 4 * np.pi) - 1 / 8 * np.pi
+        test_amp = np.ones((20,1))* 1 / 4 + np.random.rand(20,1) * 3 / 4
+        test_complex = test_amp * np.exp(1j * test_angle)
+        real_in = np.real(test_complex)
+        imag_in = np.imag(test_complex)
+        test_fig = True
+    real_in = real_imag_split(xydata)[:, 0]
+    imag_in = real_imag_split(xydata)[:, 1]
+    assert real_in.shape == imag_in.shape, "real and imaginary must have same shape"
+    in_size = real_in.shape
+    num_conds = int(np.prod(in_size[1:]))
+    project_amp = np.full_like(real_in, np.nan)
+    project_real = np.full_like(real_in, np.nan)
+    project_imag = np.full_like(real_in, np.nan)
+    project_test = []; project_err = []
+    for c in range(num_conds):
+        xy_data = np.stack((real_in[:,0], imag_in[:,0]),1)
+        not_nan = np.sum(np.isnan(xy_data),1)==0
+        xy_data = xy_data[not_nan,:]
+        num_subs = xydata.shape[0]
+        xy_mean = np.repeat(np.mean(xy_data,0,keepdims=True),num_subs,0)
+        len_c = np.divide(np.sum(np.multiply(xy_data,xy_mean),1), np.sum(np.multiply(xy_mean,xy_mean),1))
+        xy_out = len_c.reshape(num_subs,1) * xy_mean
+        project_amp[not_nan, c] = np.multiply(np.sqrt(np.square(xy_out[:,0]) + np.square(xy_out[:,1])), np.sign(len_c))
+        project_real[not_nan, c] = xy_out[:,0]
+        project_imag[not_nan, c] = xy_out[:,1]
+        t, prob = stats.ttest_1samp(project_amp[not_nan, c], 0.0)
+        project_test.append((t, prob/2)) # one-tailed, so divide by p-val two
+        project_err.append(np.divide(np.nanstd(project_amp[:, c], axis=0), np.sqrt(num_subs)))
+        out_mean = np.mean(xy_out, 0, keepdims=True)
+        assert all([ math.isclose(xy_mean[0,x], out_mean[0,x], abs_tol=1e-09) for x in [0,1] ]), "mean of projected should be the same as mean of unprojected"
+        if test_fig:
+            fig = plt.figure(figsize=(10, 10))
+            ax_max = math.ceil(np.max(np.abs(xy_data) * 5)) / 5
+            plt.plot([0, xy_mean[0, 0]], [0, xy_mean[0, 1]], '-', c="k")
+            plt.plot(np.zeros((2, 1)), [-ax_max, ax_max], '-', c="k")
+            plt.plot([-ax_max, ax_max], np.zeros((2, 1)), '-', c="k")
+            for x in range(num_subs):
+                plt.plot([xy_data[x, 0], xy_out[x, 0]], [xy_data[x, 1], xy_out[x, 1]], '-',c="gray")
+                plt.plot(xy_data[x,0], xy_data[x,1], 'o', c="g", markerfacecolor="none", markersize = 10)
+                plt.plot(xy_out[x, 0], xy_out[x, 1], 'o', c="b", markerfacecolor="none", markersize = 10)
+            plt.plot(xy_mean[0, 0], xy_mean[0, 1], 'x', c="k", markerfacecolor="none", markersize=20)
+            plt.plot(out_mean[0, 0], out_mean[0, 1], 'o', c="r", markerfacecolor="none", markersize=20)
+            axes = plt.gca()
+            axes.set_xlim([-ax_max, ax_max])
+            axes.set_ylim([-ax_max, ax_max])
+            axes.set_aspect('equal', 'box')
+            plt.show()
+    return project_amp, project_err, project_test, project_real, project_imag
 
 def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=True):
     """ Function uses eigen value decomposition
@@ -2629,16 +2664,13 @@ def roi_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM
         for r in range(roi_n[t]):
             for h in range(harmonic_n):
                 # current harmonic 
-                cur_harm = int(harmonic_list[h])
+                cur_harm = harmonic_list[h]
                 # ee_name = '{0}_harmonic_{1}'.format(roi_names[r],cur_harm)
-                xydata = [data.fft.sig_complex[cur_harm - 1] for data in subject_data[task]["data"][:, r]]
+                xydata = [data.fft.sig_complex[int(cur_harm) - 1] for data in subject_data[task]["data"][:, r]]
                 xydata = np.array(xydata, ndmin=2)
 
                 # compute elliptical errors
-                amp_mean, amp_diff, phase_mean, phase_diff, zSNR, error_ellipse = fit_error_ellipse(xydata,
-                                                                                                    ellipse_type,
-                                                                                                    make_plot,
-                                                                                                    return_rad)
+                amp_mean, amp_diff, phase_mean, phase_diff, z_snr, error_ellipse = fit_error_ellipse(xydata, ellipse_type, make_plot, return_rad)
 
                 assert amp_diff[
                            0, 0] >= 0, "warning: ROI {0} with task {1}: lower error bar is smaller than zero".format(
@@ -2650,32 +2682,28 @@ def roi_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM
                 # compute Hotelling's T-squared:
                 hot_tval, hot_pval, hot_crit = hotelling_t2(xydata)
 
+                # do vector projection
+                project_amp, project_err, project_test, project_real, project_imag = vector_projection(xydata, test_fig=False)
                 if h == 0:  # first harmonic
-                    cur_amp = np.concatenate((np.array(amp_mean, ndmin=2), amp_diff), axis=1);
-                    cur_phase = np.concatenate((np.array(phase_mean, ndmin=2), phase_diff), axis=1);
-                    cur_snr = np.array(zSNR, ndmin=2)
-                    cur_hotT2 = np.concatenate((np.array(hot_tval, ndmin=2), np.array(hot_pval, ndmin=2)), axis=1);
-                else:
-                    cur_amp = np.concatenate((cur_amp, np.concatenate((np.array(amp_mean, ndmin=2), amp_diff), axis=1)),
-                                             axis=2);
-                    cur_phase = np.concatenate(
-                        (cur_phase, np.concatenate((np.array(phase_mean, ndmin=2), phase_diff), axis=1)), axis=2);
-                    cur_snr = np.concatenate((cur_snr, np.array(zSNR, ndmin=2)), axis=2)
-                    cur_hotT2 = np.concatenate(
-                        (cur_hotT2, np.concatenate((np.array(hot_tval, ndmin=2), np.array(hot_pval, ndmin=2)), axis=1)),
-                        axis=2);
-
+                    stats_df = pd.DataFrame(index=harmonic_list,
+                        columns=['amp_mu', 'ph_mu', 'z_snr', 'el_err_amp', 'el_err_ph', "proj_err", "hotT2", "ttest_1s","project_sub_amps"])
+                stats_df.at[cur_harm, 'amp_mu'] = amp_mean
+                stats_df.at[cur_harm, 'ph_mu'] = phase_mean
+                stats_df.at[cur_harm, 'z_snr'] = z_snr
+                stats_df.at[cur_harm, 'el_err_amp'] = amp_diff
+                stats_df.at[cur_harm, 'el_err_ph'] = phase_diff
+                stats_df.at[cur_harm, 'proj_err'] = project_err
+                stats_df.at[cur_harm, 'hotT2'] = (hot_tval, hot_pval)
+                stats_df.at[cur_harm, 'ttest_1s'] = project_test
+                stats_df.at[cur_harm, 'project_sub_amps'] = project_amp
             # compute cycle average and standard error
             temp_cycle = [data.fft.mean_cycle for data in subject_data[task]["data"][:, r]]
             temp_cycle = np.squeeze(np.asarray(temp_cycle))
             cur_cycle_ave = np.array(np.mean(temp_cycle, axis=0), ndmin=2)
             sub_count = np.count_nonzero(~np.isnan(temp_cycle), axis=0)
             cur_cycle_stderr = np.array(np.divide(np.nanstd(temp_cycle, axis=0), np.sqrt(sub_count)), ndmin=2)
-            cur_cycle = np.concatenate((cur_cycle_ave, cur_cycle_stderr))
 
-            # construct the group ROI object            
-            cur_obj = groupobject(amp=cur_amp, phase=cur_phase, zSNR=cur_snr, hotT2=cur_hotT2, cycle=cur_cycle,
-                                  harmonics=harmonic_list, roi_name=roi_names[r])
+            cur_obj = {"stats": stats_df, "cycle_ave": cur_cycle_ave, "cycle_err": cur_cycle_stderr}
             if r == 0:
                 group_out = np.array(cur_obj, ndmin=1)
             else:
@@ -2685,3 +2713,22 @@ def roi_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM
         elapsed = time.time() - start_time
     print_wrap("Group analysis complete, took {0} seconds".format(int(elapsed)))
     return group_dictionary
+
+
+# used by roi_group_analysis
+class groupobject:
+    def __init__(self, amp=np.zeros((3, 1)), phase=np.zeros((3, 1)), zSNR=0, hotT2=np.zeros((2, 1)),
+                 vecT=np.zeros((2, 1)), vecErr=0,
+                 cycle=np.zeros((2, 12)), harmonics="1", roi_name="unknown"):
+        self.amp = amp
+        self.phase = phase
+        self.zSNR = zSNR
+        self.hotT2 = hotT2
+        self.cycle_average = cycle[0,]
+        dim1, dim2 = np.shape(cycle)
+        if dim1 == 2:
+            self.cycle_err = cycle[1,]
+        else:
+            self.cycle_err = []
+        self.roi_name = roi_name
+        self.harmonics = harmonics
