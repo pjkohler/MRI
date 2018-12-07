@@ -8,12 +8,14 @@ import nibabel as nib
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 from itertools import combinations
+import rpy2.robjects as ro
+from rpy2.robjects.packages import importr
+from rpy2.robjects import pandas2ri
 
 try:
     import cPickle as pickle
 except ModuleNotFoundError:
     import pickle
-
 
 ## HELPER FUNCTIONS
 def print_wrap(msg, indent=0):
@@ -204,13 +206,13 @@ def create_file_dictionary(experiment_dir):
 
 # used by roi_surf_data
 class roiobject:
-    def __init__(self, curdata=np.zeros((120, 1)), curobject=None, is_time_series=True, roiname="unknown", tr=99,
-                 stimfreq=99, nharm=99, num_vox=0, offset=0):
-        if not curobject:
+    def __init__(self, cur_data=np.zeros((120, 1)), cur_object=None, is_time_series=True, roi_names="unknown", tr=99,
+                 stim_freq=99, nharm=99, num_vox=0, offset=0):
+        if not cur_object:
             self.data = np.zeros((120, 1))
-            self.roi_name = roiname
+            self.roi_names = roi_names
             self.tr = tr
-            self.stim_freq = stimfreq
+            self.stim_freq = stim_freq
             self.num_harmonics = nharm
             self.num_vox = num_vox
             self.is_time_series = is_time_series
@@ -218,35 +220,62 @@ class roiobject:
         else:
             # if curobject provided, inherit all values
             self.data = curobject.data
-            self.roi_name = curobject.roi_name
+            self.roi_names = curobject.roi_name
             self.tr = curobject.tr
             self.stim_freq = curobject.stim_freq
             self.num_harmonics = curobject.num_harmonics
             self.num_vox = curobject.num_vox
             self.is_time_series = curobject.is_time_series
             self.offset = curobject.offset
-        if curdata.any():
+        if cur_data.any():
             if self.data.any():
-                self.data = np.dstack((self.data, curdata))
+                self.data = np.dstack((self.data, cur_data))
             else:
-                self.data = curdata
-            self.mean = self.average()
-            if self.is_time_series == True:
-                self.fft = self.fourieranalysis()
+                self.data = cur_data
 
-    def average(self):
+    def mean(self):
         if len(self.data.shape) < 3:
             return self.data
         else:
             return np.mean(self.data, axis=2, keepdims=False)
 
-    def fourieranalysis(self):
-        return fft_analysis(self.average(),
+    def fft(self):
+        assert self.is_time_series == True, "not time series, cannot run fft"
+        return fft_analysis(self.mean(),
                             tr=self.tr,
                             stimfreq=self.stim_freq,
                             nharm=self.num_harmonics,
                             offset=self.offset)
 
+def mri_frame(cur_data=np.zeros((120, 1)), is_time_series=True, roi_name="whole", tr=99, stim_freq=99, nharm=99, num_vox=0, offset=0, lean=True):
+    if "whole" in roi_name:
+        idx = ["v-{:06d}".format(x + 1) for x in range(cur_data.shape[0])]
+    else:
+        idx = roi_name
+    fft_keys = ["sig_complex", "mean_cycle"]
+    if lean:
+        cols = []
+    else:
+        cols = ["run-{0}".format(x + 1) for x in range(cur_data.shape[2])]
+        cols = cols + ['average']
+    cols = cols + ['num_vox'] + fft_keys
+    num_t = cur_data.shape[1]
+
+    # create data frame
+    cur_frame = pd.DataFrame(index=idx, columns=cols)
+    if not all(num_vox):
+        num_vox = np.ones((cur_data.shape[0], 1))
+    mean_data = np.nanmean(cur_data, axis=2)
+    fft_data = fft_analysis(mean_data.reshape(num_t, -1), tr=tr, stimfreq=stim_freq, nharm=nharm, offset=offset)
+    for x, i in enumerate(idx):
+        if not lean:
+            for r in range(cur_data.shape[2]):
+                cur_frame.at[i, "run-{0}".format(r + 1)] = [cur_data[x, :, r]]
+            cur_frame.at[i, "average"] = [mean_data[x,:]]
+        for key in fft_keys:
+            cur_frame.at[i, key ] = fft_data[key][:,x].tolist()
+    cur_frame['num_vox'] = num_vox
+    return cur_frame
 
 # used by mrifft
 class fftobject:
@@ -272,7 +301,6 @@ def mri_spec(task=None, session="01", space="suma_native", detrending=False, sca
 def write(path, data):
     with open(path, 'wb') as f:
         pickle.dump(data, f, -1)
-
 
 def read(path):
     with open(path, 'rb') as f:
@@ -349,8 +377,9 @@ def run_suma(subject, hemi='both', open_vol=False, surf_vol='standard', std141=F
     Author: pjkohler, Stanford University, 2016
     """
 
-    if fs_dir is None:
-        fs_dir = os.environ["SUBJECTS_DIR"]
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
 
     suffix = fs_dir_check(fs_dir, subject)
 
@@ -681,7 +710,7 @@ def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_
                 shutil.rmtree(tmp_dir)
 
 
-def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
+def vol_to_surf(experiment_dir, fs_dir=None, subjects=None, sub_prefix="sub-",
                 data_spec = {}, in_format = "nii.gz", out_format="gii", overwrite=False,
                 std141=False, surf_vol='standard', prefix=None,
                 map_func='ave', wm_mod=0.0, gm_mod=0.0, index='voxels', steps=10, mask=None,
@@ -760,6 +789,11 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     file_list : list of strings
         This is a list of all files created by the function
     """
+
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
+
     file_list = []
 
     if not subjects:
@@ -897,7 +931,7 @@ def vol_to_surf(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
     return file_list
 
 
-def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None, sub_prefix="sub-",
+def surf_smooth(experiment_dir, fs_dir=None, subjects=None, sub_prefix="sub-",
                 data_spec = {"space": "suma_std141"}, in_format="gii", out_format = "gii", overwrite=False,
                 blur_size=3.0, detrend_smooth=False, prefix=None, out_dir=None, keep_temp=False):
     """
@@ -947,6 +981,11 @@ def surf_smooth(experiment_dir, fs_dir=os.environ["SUBJECTS_DIR"], subjects=None
         Should temporary folder that is set up be kept after function
         runs?
     """
+
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
+
     blur_size = int(blur_size)
     assert blur_size > 0, " blur size {0} must be bigger than zero".format(blur_size)
     file_list = []
@@ -1084,8 +1123,10 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
     tmp_dir = tmp_dir = make_temp_dir()
 
     # check if subjects' freesurfer directory exists
-    if fs_dir is None:
-        fs_dir = os.environ["SUBJECTS_DIR"]
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
+
     if out_dir is None:
         out_dir = cur_dir
     # check if subjects' SUMA directory exists
@@ -1205,11 +1246,12 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, out_dir=
             - NearestNodeCoords
             - Data
     """
-    if fs_dir is None:
-        old_subject_dir = os.environ["SUBJECTS_DIR"]
-        fs_dir = os.environ["SUBJECTS_DIR"]
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
+        old_subject_dir = fs_dir
     else:
-        old_subject_dir = os.environ["SUBJECTS_DIR"]
+        old_subject_dir = os.getenv("SUBJECTS_DIR")
         os.environ["SUBJECTS_DIR"] = fs_dir
     if atlasdir is None:
         atlasdir = "{0}/ROI_TEMPLATES".format(fs_dir)
@@ -1630,14 +1672,16 @@ def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
         noise_complex[h_idx, :], noise_amp[h_idx, :], noise_phase[h_idx, :] = fft_offset(
             complex_vals[noise_idx, :].reshape(-1, nS), offset_rad)
 
-    return fftobject(
-        spectrum=spectrum, frequencies=frequencies, mean_cycle=mean_cycle,
-        sig_z=sig_z, sig_snr=sig_snr, sig_amp=sig_amp, sig_phase=sig_phase, sig_complex=sig_complex,
-        noise_amp=noise_amp, noise_phase=noise_phase, noise_complex=noise_complex)
+    fft_dict = {
+        "sig_complex": sig_complex, "sig_amp":sig_amp, "sig_phase":sig_phase,
+        "noise_complex": noise_complex, "noise_amp": noise_amp, "noise_phase": noise_phase,
+        "sig_z":sig_z, "sig_snr":sig_snr, "mean_cycle":mean_cycle,
+        "spectrum":spectrum,"frequencies":frequencies }
+    return fft_dict
 
 
 def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pre_tr=0, do_scale=False, do_detrend=False,
-                 use_regressors='standard', offset=0, TR=2.0, roilabel=None, fs_dir=os.environ["SUBJECTS_DIR"], report_timing=False):
+                 use_regressors='standard', offset=0, TR=2.0, roilabel=None, fs_dir=None, report_timing=False):
     """
     region of interest surface data
     
@@ -1687,6 +1731,11 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
     AssertError : Where surface vertices do not match
     """
     t = time.time()
+
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
+
     if not sub:
         # determine subject from input data
         sub = surf_files[0][(surf_files[0].index('sub-') + 4):(surf_files[0].index('sub-') + 8)]
@@ -1777,10 +1826,8 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
         outnames = [x + "-L" for x in newlabel] + [x + "-R" for x in newlabel] + [x + "-BL" for x in newlabel]
 
     # create a list of outdata, with shared values 
-    outdata = [roiobject(is_time_series=is_time_series, roiname=name, tr=TR, nharm=5, stimfreq=10, offset=offset) for
-               name in outnames]
-
-    print_wrap("subject {0}".format(sub), indent=1)
+    #outdata = [roiobject(is_time_series=is_time_series, roiname=name, tr=TR, nharm=5, stimfreq=10, offset=offset) for
+    #           name in outnames]
 
     data_n = [None, None]
     for h, hemi in enumerate(["L", "R"]):
@@ -1846,7 +1893,7 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
                                                                      hemi),
                     indent=2)
 
-        for run_file in cur_files:
+        for r, run_file in enumerate(cur_files):
             try:
                 cur_data = nl_surf.load_surf_data(run_file)
             except:
@@ -1926,177 +1973,362 @@ def roi_get_data(surf_files, roi_type="wang", is_time_series=True, sub=False, pr
             else:
                 data_n[h] = cur_data.shape[0]
 
-            if roi_type == "whole":
-                hemi_data.append(cur_data)
-                if run_file == cur_files[-1]:
-                    out_idx = outnames.index("whole-" + hemi)
-                    hemi_data = np.mean(hemi_data, axis=0)
-                    outdata[out_idx] = roiobject(np.transpose(hemi_data), curobject=outdata[out_idx])
+            if r == 0:
+                run_data = cur_data
             else:
-                assert data_n[h] == roi_n, "Data and ROI have different number of surface vertices"
-                for roi_name in newlabel:
-                    # note,  account for one-indexing of ROIs
-                    roi_set = set([i + 1 for i, s in enumerate(roilabel) if roi_name in s])
-                    # Find index of each roi in roi_data
-                    roi_index = np.array([])
-                    for item in roi_set:
-                        roi_temp_index = np.array(np.where(roi_data == item)).flatten()
-                        roi_index = np.concatenate((roi_index, roi_temp_index))
-                    roi_index = roi_index.astype(int)
-                    num_vox = len(roi_index)
-                    if num_vox == 0:
-                        print_wrap(roi_name + "-" + hemi + " " + str(roi_set))
-                    roi_t = np.mean(cur_data[roi_index], axis=0, keepdims=True)
-                    out_idx = outnames.index(roi_name + "-" + hemi)
-                    outdata[out_idx].num_vox = num_vox
-                    outdata[out_idx] = roiobject(np.transpose(roi_t), curobject=outdata[out_idx])
+                run_data = np.dstack((run_data, cur_data))
+        if roi_type not in "whole":
+            assert data_n[h] == roi_n, "Data and ROI have different number of surface vertices"
+            roi_t = np.full(((len(newlabel), run_data.shape[1], run_data.shape[2])), np.nan)
+            vox_count = np.zeros((len(newlabel), 1))
+            for rn, roi_name in enumerate(newlabel):
+                # note,  account for one-indexing of ROIs
+                roi_set = set([i + 1 for i, s in enumerate(roilabel) if roi_name in s])
+                # Find index of each roi in roi_data
+                roi_index = np.array([])
+                for item in roi_set:
+                    roi_temp_index = np.array(np.where(roi_data == item)).flatten()
+                    roi_index = np.concatenate((roi_index, roi_temp_index))
+                roi_index = roi_index.astype(int)
+                vox_count[rn] = len(roi_index)
+                if len(roi_index) == 0:
+                    print_wrap(roi_name + "-" + hemi + " " + str(roi_set))
+                roi_t[rn,:,:] = np.mean(run_data[roi_index], axis=0, keepdims=True)
+            run_data = roi_t
+            cur_label = newlabel
+        else:
+            cur_label = ["v-{:06d}".format(x + 1) for x in range(cur_data.shape[0])]
+            vox_count = np.ones((run_data.shape[0], 1))
+        vox_count = [int(i) for i in vox_count]
 
-                    if "R" in hemi and run_file == cur_files[-1]:
-                        # do bilateral
-                        other_idx = outnames.index(roi_name + "-" + "L")
-                        bl_idx = outnames.index(roi_name + "-" + "BL")
-                        bl_data = np.divide(outdata[other_idx].data + outdata[out_idx].data, 2)
-                        num_vox = np.add(outdata[other_idx].num_vox, outdata[out_idx].num_vox)
-                        outdata[bl_idx].num_vox = num_vox
-                        outdata[bl_idx] = roiobject(bl_data, outdata[bl_idx])
+        if "L" in hemi:
+            left_data = run_data
+            left_vox = vox_count
+            left_label = ["{0}-{1}".format(label, hemi) for label in cur_label]
+        else:
+            right_data = run_data
+            right_vox = vox_count
+            right_label = ["{0}-{1}".format(label, hemi) for label in cur_label]
+
+            if roi_type not in "whole":
+                # only do bilateral data for ROIs
+                bl_data = np.divide(left_data + right_data, 2)
+                bl_vox = [sum(x) for x in zip(left_vox, right_vox)]
+
+                all_data = np.vstack((left_data,right_data, bl_data))
+                all_vox = left_vox + right_vox + bl_vox
+                cur_label = left_label + right_label + ["{0}-BL".format(label) for label in cur_label]
+            else:
+                # combine left and right
+                all_data = np.vstack((left_data, right_data))
+                all_vox = left_vox + right_vox
+                cur_label = left_label + right_label
+
+    # make the frame
+    #cur_frame = mri_frame(
+    #    cur_data=all_data, is_time_series=is_time_series, roi_name=cur_label, num_vox=all_vox, tr=TR, nharm=5,
+    #    stim_freq=10, offset=offset)
+
+    out_obj = roiobject(cur_data=all_data.transpose(1,0,2), cur_object=None, is_time_series=is_time_series, roi_names=cur_label, tr=TR,
+                 stim_freq=10, nharm=5, num_vox=all_vox, offset=offset)
+
     if report_timing:
         elapsed = time.time() - t
-        print_wrap("ROI Surf Data run complete, took {0} seconds".format(elapsed))
-    return (outdata, outnames)
+        print_wrap("roi_get_data complete, took {:3.2f} seconds".format(elapsed), indent=1)
 
+    return (out_obj)
 
-def hotelling_t2(in_vals, alpha=0.05, test_mu=np.zeros((1, 1), dtype=np.complex), test_type="Hot"):
-    assert np.iscomplexobj(in_vals), "all values must be complex"
-    assert (alpha > 0.0) & (alpha < 1.0), "alpha must be between 0 and 1"
+def hotelling_t2(dset1=np.zeros((15,3,4), dtype=np.complex), dset2=np.zeros((1, 1), dtype=np.complex), test_type="hot_dep", test_mode=False,report_timing=True):
+    t = time.time()
+    assert test_type != "tcirc", "tcirc not currently supported"
+    if not dset1.any():
+        dset1 = simulate_complex(dset1.shape , a_mu=1.1, ph_mu=np.pi, assign_nans=True )
+        dset2 = simulate_complex(dset1.shape , a_mu=1, ph_mu=np.pi, assign_nans=True )
+    else:
+        assert np.iscomplexobj(dset1), "non-complex values given as 'dset1' input"
+        assert np.iscomplexobj(dset2), "non-complex values given as 'dset2' input"
 
     # compare against zero?
-    in_vals = in_vals.reshape(in_vals.shape[0], -1)
-    if in_vals.shape[1] == 1:
-        in_vals = np.append(in_vals, np.zeros(in_vals.shape, dtype=np.complex), axis=1)
+    if dset2.size == 1:
         num_cond = 1
+        dset2 = np.full_like(dset1, dset2, dtype=np.complex)
+        assert test_type in ["hot_dep", "tcirc"], "second dset is single vector, two full datasets required for independent test"
     else:
-        num_cond = 2
-        assert all(test_mu) == 0, "when two-dimensional complex input provided, test_mu must be complex(0,0)"
-    assert in_vals.shape[1] <= 2, 'length of second dimension of complex inputs may not exceed two'
-
-    # replace NaNs
-    in_vals = in_vals[~np.isnan(in_vals)]
-    # determine number of trials
-    M = int(in_vals.shape[0] / 2);
-    in_vals = np.reshape(in_vals, (M, 2))
-    p = np.float(2.0);  # number of variables
-    df1 = p;  # numerator degrees of freedom.
-
-    if "hot" in test_type.lower():
-        # subtract conditions
-        in_vals = np.reshape(np.subtract(in_vals[:, 0], in_vals[:, 1]), (M, 1))
-        df2 = M - p;  # denominator degrees of freedom.
-        in_vals = np.append(np.real(in_vals), np.imag(in_vals), axis=1)
-        samp_mu = np.mean(in_vals, 0)
-        test_mu = np.append(np.real(test_mu), np.imag(test_mu))
-        samp_cov_mat = np.cov(in_vals[:, 0], in_vals[:, 1])
-
-        # Eqn. 2 in Sec. 5.3 of Anderson (1984), multiply by inverse of fraction used below::        
-        t_crit = np.multiply(np.divide((M - 1) * p, df2), scp.stats.f.ppf(1 - alpha, df1, df2))
-
-        # try
-        inv_cov_mat = np.linalg.inv(samp_cov_mat)
-        # Eqn. 2 of Sec. 5.1 of Anderson (1984):
-        tsqrd = np.float(
-            np.matmul(np.matmul(M * (samp_mu - test_mu), inv_cov_mat), np.reshape(samp_mu - test_mu, (2, 1))))
-        # F approximation 
-        tsqrdf = np.divide(df2, (M - 1) * p) * tsqrd;
-        # use scipys F cumulative distribution function.
-        p_val = 1.0 - scp.stats.f.cdf(tsqrdf, df1, df2)
-    else:
-        # note, if two experiment conditions are to be compared, we assume that the number of samples is equal
-        df2 = num_cond * (2.0 * M - p);  # denominator degrees of freedom.
-
-        # compute estimate of sample mean(s) from V & M 1991 
-        samp_mu = np.mean(in_vals, 0.0)
-
-        # compute estimate of population variance, based on individual estimates
-        v_indiv = 1 / df2 * (np.sum(np.square(np.abs(in_vals[:, 0] - samp_mu[0])))
-                             + np.sum(np.square(np.abs(in_vals[:, 1] - samp_mu[1]))))
-
-        if num_cond == 1:
-            # comparing against zero
-            v_group = M / p * np.square(np.abs(samp_mu[0] - samp_mu[1]))
-            # note, distinct multiplication factor
-            mult_factor = 1 / M
+        if test_type in ["hot_dep", "tcirc"]:
+            assert dset2.shape == dset1.shape, "'dset2' input must either be a single complex value or a nparray same shape as 'dset1'"
         else:
-            # comparing two conditions
-            v_group = (np.square(M)) / (2 * (M * 2)) * np.square(np.abs(samp_mu[0] - samp_mu[1]))
-            # note, distinct multiplication factor
-            mult_factor = (M * 2) / (np.square(M))
+            assert dset2.shape[1:] == dset1.shape[1:], "'dset2' input must have same shape as 'dset1' on all dimensions but the first"
+        num_cond = 2
 
-        # Find critical F for corresponding alpha level drawn from F-distribution F(2,2M-2)
-        # Use scipys percent point function (inverse of `cdf`) for f
-        # multiply by inverse of multiplication factor to get critical t_circ
-        t_crit = scp.stats.f.ppf(1 - alpha, df1, df2) * (1 / mult_factor)
-        # compute the tcirc-statistic
-        tsqrd = (v_group / v_indiv) * mult_factor;
-        # M x T2Circ ( or (M1xM2/M1+M2)xT2circ with 2 conditions)
-        # is distributed according to F(2,2M-2)
-        # use scipys F probability density function
-        p_val = 1 - scp.stats.f.cdf(tsqrd * (1 / mult_factor), df1, df2);
-    return (tsqrd, p_val, t_crit)
+    out_dfs = np.full((2,) + dset1.shape[1:], np.nan)
+    out_fapprox = np.full(dset1.shape[1:], np.nan)
+    out_p = np.full(dset1.shape[1:], np.nan)
 
-def vector_projection(xydata=np.zeros((20,2)), test_fig=False):
-    # project_amp, project_err, project_test, project_real, project_imag = vector_projection(real_in, imag_in, test_fig=False)
-    if not xydata[0]:
-        test_angle = np.ones((20,1)) * np.random.rand()*2*np.pi-np.pi
-        test_angle = test_angle + (np.random.rand(20,1) * 1 / 4 * np.pi) - 1 / 8 * np.pi
-        test_amp = np.ones((20,1))* 1 / 4 + np.random.rand(20,1) * 3 / 4
-        test_complex = test_amp * np.exp(1j * test_angle)
-        real_in = np.real(test_complex)
-        imag_in = np.imag(test_complex)
+    # PREP R
+    icsnp = importr('ICSNP')
+    pandas2ri.activate()
+
+    if test_type.lower() in ["hot_dep"]:
+        # mask out NaNs
+        is_nan = (np.isnan(dset1) + np.isnan(dset2)) > 0
+        # mask real and imaginary separately
+        dset1_ma = np.ma.masked_where(is_nan, dset1)
+        dset2_ma = np.ma.masked_where(is_nan, dset2)
+
+        # determine number of trials
+        p = np.float(2.0)  # number of variables
+        df1 = p  # numerator degrees of freedom.
+        # subtract conditions
+        combo_data = np.subtract(dset1_ma, dset2_ma)
+        real_data = np.real(combo_data)
+        imag_data = np.imag(combo_data)
+        test_mu = [0.0, 0.0]
+        for idx in np.ndindex(dset1_ma.shape[1:]):
+            cur_idx = (slice(None),) + idx 
+
+            # USE R
+            frame_data = pd.DataFrame(np.stack((real_data[cur_idx],imag_data[cur_idx]), axis=1))
+            os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+            hot_r = icsnp.HotellingsT2(frame_data.dropna(), mu=np.asarray(test_mu))
+            r_tsqrdf = np.array(hot_r.rx2('statistic'))
+            r_dfs = np.array(hot_r.rx2('parameter'))
+            r_p = np.array(hot_r.rx2('p.value'))
+
+            # make sure that one-sample test was done
+            assert "Hotelling's one sample T2-test" in hot_r.rx2('method')
+
+            if test_mode:
+                # COMPUTE VALUES
+                M = sum(is_nan[cur_idx] == 0)
+                df2 = M - p  # denominator degrees of freedom.
+                samp_cov_mat = np.ma.cov(real_data[cur_idx], imag_data[cur_idx])
+
+                # Eqn. 2 in Sec. 5.3 of Anderson (1984), multiply by inverse of fraction below::
+                t_crit = (((M - 1) * p) / df2) * scp.stats.f.ppf(1 - 0.05, df1, df2)
+
+                # Eqn. 2 of Sec. 5.1 of Anderson (1984):
+                inv_cov_mat = np.linalg.inv(samp_cov_mat)
+                samp_mu = np.array([np.ma.mean(real_data[cur_idx],axis=0), np.ma.mean(imag_data[cur_idx],axis=0)]) 
+                c_tsqrd = np.float(
+                    np.matmul(np.matmul(M * np.reshape(samp_mu - test_mu, (1, 2)), inv_cov_mat), samp_mu - test_mu))
+
+                # F approximation, inverse of fraction above
+                c_tsqrdf = ( ( df2 / ((M - 1) * p) ) ) * c_tsqrd
+                # use scipys F cumulative distribution function.
+                c_p = 1.0 - scp.stats.f.cdf(c_tsqrdf, df1, df2)  
+
+                assert bool(np.isclose(r_p,c_p, rtol=1e-09)) and bool(np.isclose(c_tsqrdf, r_tsqrdf, rtol=1e-09)) and r_dfs[0] == df1 and r_dfs[1] == df2, "test mode failed: computed and r-values are different"
+
+            # assign output data
+            out_dfs[(slice(None),) + idx] = r_dfs
+            out_fapprox[idx] = r_tsqrdf
+            out_p[idx] = r_p
+
+    elif test_type.lower() in ["hot_ind"]:
+        # mask out NaNs
+        nan_dset1 = np.isnan(dset1) > 0
+        nan_dset2 = np.isnan(dset2) > 0
+        # mask real and imaginary separately
+        dset1_ma = np.ma.masked_where(nan_dset1, dset1)
+        dset2_ma = np.ma.masked_where(nan_dset2, dset2)
+        dset1_real = np.real(dset1_ma); dset1_imag = np.imag(dset1_ma)
+        dset2_real = np.real(dset2_ma); dset2_imag = np.imag(dset2_ma)
+
+        p = np.float(2.0)  # number of variables
+        df1 = p  # numerator degrees of freedom
+        test_mu = [0.0, 0.0]
+        for idx in np.ndindex(dset1_ma.shape[1:]):
+            cur_idx = (slice(None),) + idx
+
+            # USE R
+            frame_data1 = pd.DataFrame(np.stack((dset1_real[cur_idx],dset1_imag[cur_idx]), axis=1))
+            frame_data2 = pd.DataFrame(np.stack((dset2_real[cur_idx],dset2_imag[cur_idx]), axis=1))
+            os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+            hot_r = icsnp.HotellingsT2(frame_data1.dropna(), frame_data2.dropna(), mu=np.asarray(test_mu), test='f')
+            r_tsqrdf = np.array(hot_r.rx2('statistic'))
+            r_dfs = np.array(hot_r.rx2('parameter'))
+            r_p = np.array(hot_r.rx2('p.value'))
+
+            # make sure that two-sample test was done
+            assert "Hotelling's two sample T2-test" in hot_r.rx2('method')
+
+            if test_mode:
+                # COMPUTE VALUES
+                M_1 = sum(nan_dset1[cur_idx] == 0)
+                M_2 = sum(nan_dset2[cur_idx] == 0)
+                df2 = M_1 + M_2 - 1 - p # denominator degrees of freedom.
+
+                # Eqn. 18 in Sec. 5.17 of Anderson (1984), multiply by inverse of fraction below:
+                t_crit = ( ( ( M_1 + M_2 - 2 ) * p ) / df2 ) * scp.stats.f.ppf(1 - 0.05, df1, df2)
+
+                scov_1 = np.ma.cov(dset1_real[cur_idx], dset1_imag[cur_idx])
+                scov_2 = np.ma.cov(dset2_real[cur_idx], dset2_imag[cur_idx])
+
+                S_pool = ( (M_1 - 1) * scov_1 + (M_2 - 1) * scov_2 ) / (M_1 + M_2 - 2)
+                diff_S_pool = S_pool * (1 / M_1 + 1 / M_2)
+
+                diff_mu = np.array([np.ma.mean(dset1_real[cur_idx], axis=0), np.ma.mean(dset1_imag[cur_idx],axis=0)]) - np.array([np.ma.mean(dset2_real[cur_idx],axis=0), np.ma.mean(dset2_imag[cur_idx],axis=0)])
+
+                inv_cov_mat = np.linalg.inv(diff_S_pool)
+
+                c_tsqrd = np.float(
+                    np.matmul(np.matmul(np.reshape(diff_mu - test_mu, (1, 2)), inv_cov_mat), diff_mu - test_mu))
+                c_tsqrdf = c_tsqrd * ( df2 / (p * (M_1 + M_2 - 2)) )
+                c_p = 1.0 - scp.stats.f.cdf(c_tsqrdf, df1, df2)
+
+                assert bool(np.isclose(r_p,c_p, rtol=1e-09)) and bool(np.isclose(c_tsqrdf, r_tsqrdf, rtol=1e-09)) and r_dfs[0] == df1 and r_dfs[1] == df2, "test mode failed: computed and r-values are different"
+
+                # # Eqn. 16 in Sec. 5.3.4 of Anderson (1984)
+                # FOR SOME REASON THIS APPROACH PRODUCES OUTRAGEOUSLY LOW P-VALUES, MUST BE SOME BUG!
+                # diff_S_pool2 = ( 1 / ( M_1 + M_2 - 2 ) ) * (scov_1 + scov_2)
+                # # Eqn. 17 in Sec. 5.3.4 of Anderson (1984)
+                # tsqrd2 = np.float(
+                #     np.matmul(np.matmul( ( ( M_1 * M_2 ) / ( M_1 + M_2) ) * np.reshape(diff_mu - test_mu, (1, 2)), np.linalg.inv(diff_S_pool2)), diff_mu - test_mu))
+                # tsqrdf2 = tsqrd2 * ( df2 / (p * (M_1 + M_2 - 2)) )
+                # p_val2 = 1.0 - scp.stats.f.cdf(tsqrdf2, df1, df2)
+
+            # assign output data
+            out_dfs[(slice(None),) + idx] = r_dfs
+            out_fapprox[idx] = r_tsqrdf
+            out_p[idx] = r_p
+    #else:
+        # # note, if two experiment conditions are to be compared, we assume that the number of samples is equal
+        # df2 = num_cond * (2.0 * M - p)  # denominator degrees of freedom.
+        #
+        # # compute estimate of sample mean(s) from V & M 1991
+        # samp_mu = np.mean(in_vals, 0.0)
+        #
+        # # compute estimate of population variance, based on individual estimates
+        # v_indiv = 1 / df2 * (np.sum(np.square(np.abs(in_vals[:, 0] - samp_mu[0])))
+        #                      + np.sum(np.square(np.abs(in_vals[:, 1] - samp_mu[1]))))
+        #
+        # if num_cond == 1:
+        #     # comparing against zero
+        #     v_group = M / p * np.square(np.abs(samp_mu[0] - samp_mu[1]))
+        #     # note, distinct multiplication factor
+        #     mult_factor = 1 / M
+        # else:
+        #     # comparing two conditions
+        #     v_group = (np.square(M)) / (2 * (M * 2)) * np.square(np.abs(samp_mu[0] - samp_mu[1]))
+        #     # note, distinct multiplication factor
+        #     mult_factor = (M * 2) / (np.square(M))
+        #
+        # # Find critical F for corresponding alpha level drawn from F-distribution F(2,2M-2)
+        # # Use scipys percent point function (inverse of `cdf`) for f
+        # # multiply by inverse of multiplication factor to get critical t_circ
+        # t_crit = scp.stats.f.ppf(1 - alpha, df1, df2) * (1 / mult_factor)
+        # # compute the tcirc-statistic
+        # tsqrd = (v_group / v_indiv) * mult_factor;
+        # # M x T2Circ ( or (M1xM2/M1+M2)xT2circ with 2 conditions)
+        # # is distributed according to F(2,2M-2)
+        # # use scipys F probability density function
+        # p_val = 1 - scp.stats.f.cdf(tsqrd * (1 / mult_factor), df1, df2);
+    
+    if report_timing:
+        elapsed = time.time() - t
+        print_wrap("roi_get_data complete, took {:3.2f} seconds".format(elapsed), indent=1)
+    
+    return (out_fapprox, out_p, out_dfs)
+
+def simulate_complex(test_shape, a_mu=None, ph_mu=None, assign_nans=False):
+    # phase
+    if ph_mu:
+        # use specified mean
+        test_ph = np.full(test_shape,ph_mu)
+    else:
+        # use random values between -pi and pi
+        test_ph = np.repeat(np.random.random_sample((1,) + test_shape[1:]) * 2 * np.pi - np.pi, test_shape[0], 0)
+    # add 1/4 pi noise around mean
+    test_ph = test_ph + (np.random.random_sample(test_shape) * 1 / 4 * np.pi) - 1 / 8 * np.pi
+    # amplitude
+    if a_mu:
+        test_amp = np.full(test_shape, a_mu)
+    else:
+        # use random values between 0 and 1
+        test_amp = np.repeat(np.random.random_sample((1,) + test_shape[1:]), test_shape[0], 0)
+    # add 1/4 noise around mean
+    test_amp = test_amp * 7 / 8 + test_amp * (np.random.random_sample(test_shape) * 1 / 4)
+    complex_test = test_amp * np.exp(1j * test_ph)
+    real_test = np.real(complex_test)
+    imag_test = np.imag(complex_test)
+    if assign_nans:
+        for idx in np.ndindex(test_shape[1:]):
+            # assign one NaN per 'condition' to the real and imaginary values
+            real_nan = np.random.randint(0, test_shape[0], 1)
+            real_idx = (real_nan,) + idx
+            imag_nan = np.random.randint(0, test_shape[0], 1)
+            imag_idx = (imag_nan,) + idx
+            real_test[real_idx] = np.nan
+            imag_test[imag_idx] = np.nan
+    complex_test = imag_test + 1j * real_test
+    return complex_test
+
+def vector_projection(complex_in=np.zeros((15,3,4), dtype="complex128"), test_fig=False):
+    # project_amp, project_err, project_t, project_p, project_real, project_imag = vector_projection(complex_in, test_fig=False)
+    if not complex_in.any():
+        test_shape = complex_in.shape
+        complex_in = simulate_complex(test_shape)
         test_fig = True
-    real_in = real_imag_split(xydata)[:, 0]
-    imag_in = real_imag_split(xydata)[:, 1]
+    else:
+        assert np.iscomplexobj(complex_in), "input values must be complex"
+    real_in = np.real(complex_in)
+    imag_in = np.imag(complex_in)
     assert real_in.shape == imag_in.shape, "real and imaginary must have same shape"
-    in_size = real_in.shape
-    num_conds = int(np.prod(in_size[1:]))
-    project_amp = np.full_like(real_in, np.nan)
-    project_real = np.full_like(real_in, np.nan)
-    project_imag = np.full_like(real_in, np.nan)
-    project_test = []; project_err = []
-    for c in range(num_conds):
-        xy_data = np.stack((real_in[:,0], imag_in[:,0]),1)
-        not_nan = np.sum(np.isnan(xy_data),1)==0
-        xy_data = xy_data[not_nan,:]
-        num_subs = xydata.shape[0]
-        xy_mean = np.repeat(np.mean(xy_data,0,keepdims=True),num_subs,0)
-        len_c = np.divide(np.sum(np.multiply(xy_data,xy_mean),1), np.sum(np.multiply(xy_mean,xy_mean),1))
-        xy_out = len_c.reshape(num_subs,1) * xy_mean
-        project_amp[not_nan, c] = np.multiply(np.sqrt(np.square(xy_out[:,0]) + np.square(xy_out[:,1])), np.sign(len_c))
-        project_real[not_nan, c] = xy_out[:,0]
-        project_imag[not_nan, c] = xy_out[:,1]
-        t, prob = stats.ttest_1samp(project_amp[not_nan, c], 0.0)
-        project_test.append((t, prob/2)) # one-tailed, so divide by p-val two
-        project_err.append(np.divide(np.nanstd(project_amp[:, c], axis=0), np.sqrt(num_subs)))
-        out_mean = np.mean(xy_out, 0, keepdims=True)
-        assert all([ math.isclose(xy_mean[0,x], out_mean[0,x], abs_tol=1e-09) for x in [0,1] ]), "mean of projected should be the same as mean of unprojected"
-        if test_fig:
-            fig = plt.figure(figsize=(10, 10))
-            ax_max = math.ceil(np.max(np.abs(xy_data) * 5)) / 5
-            plt.plot([0, xy_mean[0, 0]], [0, xy_mean[0, 1]], '-', c="k")
+
+    is_nan = (np.isnan(real_in) + np.isnan(imag_in)) > 0
+    # mask real and imaginary separately
+    real_ma = np.ma.masked_where(is_nan, real_in)
+    imag_ma = np.ma.masked_where(is_nan, imag_in)
+    c_data = np.ma.stack((real_ma, imag_ma), -1)
+    c_data = np.moveaxis(c_data, -1, 0)
+    c_mean = np.repeat(np.ma.mean(c_data, 1, keepdims=True), c_data.shape[1], 1)
+
+    len_c = np.divide(np.sum(np.multiply(c_data, c_mean), 0), np.sum(np.multiply(c_mean, c_mean), 0))
+    c_out = len_c * c_mean
+
+    project_amp = np.multiply(np.sqrt(np.square(c_out[0, :]) + np.square(c_out[1, :])), np.sign(len_c))
+
+    # compute t-values
+    project_t, project_p = stats.ttest_1samp(project_amp, 0.0)
+    project_p = project_p / 2  # one-tailed, so divide by p-vals by two
+
+    # and standard error
+    project_err = np.divide(np.nanstd(project_amp, axis=0), np.sqrt(sum(is_nan==0)))
+
+    # fill nans back in
+    project_amp = np.ma.filled(project_amp)
+    project_real = np.ma.filled(c_out[0, :], np.nan)
+    project_imag = np.ma.filled(c_out[1, :], np.nan)
+
+    out_mean = np.ma.mean(c_out, 1, keepdims=False)
+    assert np.all(
+        np.asarray([np.isclose(np.ma.max(c_mean, axis=1)[x], out_mean[x, :], atol=1e-09) for x in [0, 1]])
+    ), "mean of projected should be the same as mean of unprojected"
+
+    if test_fig:
+        for idx in np.ndindex(c_data.shape[2:]):
+            cur_idx = (slice(None),) + (slice(None),) + idx
+            fig_in = c_data[cur_idx]
+            fig_out = c_out[cur_idx]
+            fig_mean = c_mean[cur_idx]
+            fig_mean = fig_mean[:,0] # same value for all subs
+            ax_max = math.ceil(np.max(np.abs(fig_in) * 5)) / 5
+            plt.figure(figsize=(5, 5))
+            plt.plot([0, fig_mean[0]], [0, fig_mean[1]], '-', c="k")
             plt.plot(np.zeros((2, 1)), [-ax_max, ax_max], '-', c="k")
             plt.plot([-ax_max, ax_max], np.zeros((2, 1)), '-', c="k")
-            for x in range(num_subs):
-                plt.plot([xy_data[x, 0], xy_out[x, 0]], [xy_data[x, 1], xy_out[x, 1]], '-',c="gray")
-                plt.plot(xy_data[x,0], xy_data[x,1], 'o', c="g", markerfacecolor="none", markersize = 10)
-                plt.plot(xy_out[x, 0], xy_out[x, 1], 'o', c="b", markerfacecolor="none", markersize = 10)
-            plt.plot(xy_mean[0, 0], xy_mean[0, 1], 'x', c="k", markerfacecolor="none", markersize=20)
-            plt.plot(out_mean[0, 0], out_mean[0, 1], 'o', c="r", markerfacecolor="none", markersize=20)
+            plt.plot([fig_in[0, :], fig_out[0, :]], [fig_in[1, :], fig_out[1, :]], '-',c="gray")
+            plt.plot(fig_in[0, :], fig_in[1, :], 'o', c="g", markerfacecolor="none", markersize = 10)
+            plt.plot(fig_out[0, :], fig_out[1, :], 'o', c="b", markerfacecolor="none", markersize = 10)
+            plt.plot(fig_mean[0], fig_mean[1], 'o', c="r", markerfacecolor="none", markersize=20)
             axes = plt.gca()
             axes.set_xlim([-ax_max, ax_max])
             axes.set_ylim([-ax_max, ax_max])
             axes.set_aspect('equal', 'box')
             plt.show()
-    return project_amp, project_err, project_test, project_real, project_imag
+    return project_amp, project_err, project_t, project_p, project_real, project_imag
 
-def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=True):
+def fit_error_ellipse(complex_in=np.zeros((15,100000), dtype="complex128"), ellipse_type='SEM', make_plot=True, return_rad=True):
     """ Function uses eigen value decomposition
     to find two perpendicular axes aligned with xydata
     where the eigen vector correspond to variances 
@@ -2142,214 +2374,237 @@ def fit_error_ellipse(xydata, ellipse_type='SEM', make_plot=False, return_rad=Tr
             Array of error ellipses
     """
 
+    if not complex_in.any():
+        test_shape = complex_in.shape
+        complex_in = simulate_complex(test_shape)
+        make_plot = False
+    else:
+        assert np.iscomplexobj(complex_in), "input values must be complex"
+
     # convert return_rad to an integer for indexing purposes later
     return_rad = int(return_rad)
-
-    assert np.iscomplexobj(xydata), "all values must be complex"
-
-    xydata = real_imag_split(xydata)
-
-    n = xydata.shape[0]
-    xydata = xydata.reshape(xydata.shape[0], -1)
-    assert xydata.shape[1] == 2, 'data should be of dimensions: N x 2, currently: {0}'.format(xydata.shape[1])
-    assert len(xydata.shape) <= 2, "data should not have more than 2 dimensions"
-
-    try:
-        (mean_xy, sampCovMat, smaller_eigenvec,
-         smaller_eigenval, larger_eigenvec,
-         larger_eigenval, phi) = eig_fouriercoefs(xydata)
-    except:
-        print('Unable to run eigen value decomposition. Probably data have only 1 sample')
-        return None
-    theta_grid = np.linspace(0, 2 * np.pi, num=100)
-    if ellipse_type == '1STD':
-        a = np.sqrt(larger_eigenval)
-        b = np.sqrt(smaller_eigenval)
-    elif ellipse_type == '2STD':
-        a = 2 * np.sqrt(larger_eigenval)
-        b = 2 * np.sqrt(smaller_eigenval)
-    elif ellipse_type == 'SEMarea':
-        # scale ellipse's area by sqrt(n)
-        a = np.sqrt(larger_eigenval / np.sqrt(n))
-        b = np.sqrt(smaller_eigenval / np.sqrt(n))
-    elif ellipse_type == 'SEM' or ellipse_type == 'SEMellipse':
-        # contour at stdDev/sqrt(n)
-        a = np.sqrt(larger_eigenval) / np.sqrt(n)
-        b = np.sqrt(smaller_eigenval) / np.sqrt(n)
-    elif 'CI' in ellipse_type:
-        # following Eqn. 5-19 Johnson & Wichern (2007)
-        try:
-            critVal = float(ellipse_type[:-3]) / 100
-        except:
-            print('ellipse_type incorrectly formatted, please see docstring')
-            return None
-        assert critVal < 1.0 and critVal > 0.0, 'ellipse_type CI range must be between 0 & 100'
-        t0_sqrd = ((n - 1) * 2) / (n * (n - 2)) * stats.f.ppf(critVal, 2, n - 2)
-        a = np.sqrt(larger_eigenval * t0_sqrd)
-        b = np.sqrt(smaller_eigenval * t0_sqrd)
-    else:
-        print('ellipse_type Input incorrect, please see docstring')
-        return None
-    # the ellipse in x & y coordinates
-    ellipse_x_r = a * np.cos(theta_grid)
-    ellipse_x_r = np.reshape(ellipse_x_r, (ellipse_x_r.shape[0], 1))
-    ellipse_y_r = b * np.sin(theta_grid)
-    ellipse_y_r = np.reshape(ellipse_y_r, (ellipse_y_r.shape[0], 1))
-
-    # Define a rotation matrix
-    R = np.array([[np.cos(phi), np.sin(phi)], [-np.sin(phi), np.cos(phi)]])
-    # rotate ellipse to some angle phi
-    error_ellipse = np.dot(np.concatenate((ellipse_x_r, ellipse_y_r), axis=1), R)
-    # shift to be centered on mean coordinate
-    error_ellipse = np.add(error_ellipse, mean_xy)
-
-    # find vector length of each point on ellipse
-    norms = np.array([np.linalg.norm(error_ellipse[point, :]) for point in range(error_ellipse.shape[0])])
-    ampMinNorm = min(norms)
-    ampMinNormIx = np.argmin(norms)
-    ampMaxNorm = max(norms)
-    ampMaxNormIx = np.argmax(norms)
-    amp_mean = np.linalg.norm(mean_xy)
-    amp_bounds = np.array([ampMinNorm, ampMaxNorm])
-
-    # calculate phase angles & find max pairwise difference to determine phase bounds
-    phaseAngles = np.arctan2(error_ellipse[:, 1], error_ellipse[:, 0])
-    pairs = np.array([np.array(comb) for comb in list(combinations(phaseAngles, 2))])
-    diffPhase = np.absolute(pairs[:, 1] - pairs[:, 0])  # find absolute difference of each pair
-    diffPhase[diffPhase > np.pi] = 2 * np.pi - diffPhase[diffPhase > np.pi]  # unwrap the difference
-    maxDiffIdx = np.argmax(diffPhase)
-    anglesOI = pairs[maxDiffIdx, :]
-    phaseMinIx = np.argwhere(phaseAngles == anglesOI[0])[0]
-    phaseMaxIx = np.argwhere(phaseAngles == anglesOI[1])[0]
-
-    # convert to degrees (if necessary) & find diff between (max bound & mean phase) & (mean phase & min bound)
-    # everything converted from [-pi, pi] to [0, 2*pi] for unambiguous calculation
-    convFactor = np.array([180 / np.pi, 1])
+    conv_factor = np.array([180 / np.pi, 1])
     unwrap_factor = np.array([360, 2 * np.pi])
-    phaseEllipseExtremes = anglesOI * convFactor[return_rad]
-    phaseEllipseExtremes[phaseEllipseExtremes < 0] = phaseEllipseExtremes[phaseEllipseExtremes < 0] + unwrap_factor[
-        return_rad]
 
-    phaseBounds = np.array([min(phaseEllipseExtremes), max(phaseEllipseExtremes)])
-    phase_mean = np.arctan2(mean_xy[1], mean_xy[0]) * convFactor[return_rad]
+    # mask out NaNs
+    is_nan = np.isnan(complex_in)
+    # mask real and imaginary separately
+    complex_ma = np.ma.masked_where(is_nan, complex_in)
+    # now loop over data sets
+    amp_out = np.full((3,) + complex_in.shape[1:], np.nan)
+    phase_out = np.full((3,) + complex_in.shape[1:], np.nan)
+    snr_out = np.full(complex_in.shape[1:], np.nan)
+    count = 0
+    print_proc = -1
+    for idx in np.ndindex(complex_ma.shape[1:]):
+        t = time.time()
+        cur_proc = 100-np.ceil((np.prod(complex_ma.shape[1:])-count)/np.prod(complex_ma.shape[1:]) * 100)
+        if cur_proc > print_proc:
+            print_wrap("running: {:2.2f}%".format(cur_proc), indent=1)
+            print_proc = cur_proc
+        count += 1
+        cur_idx = (slice(None),) + idx
+        n = sum(is_nan[cur_idx]==0)
+        real_data = np.real(complex_ma[cur_idx])
+        imag_data = np.imag(complex_ma[cur_idx])
+        # mean and covariance
+        mean_data = np.array([np.ma.mean(real_data), np.ma.mean(imag_data)])
+        try:
+            samp_covmat = np.ma.cov(np.ma.array([real_data, imag_data]))
+            # calc eigenvalues, eigenvectors
+            eigenval, eigenvec = np.linalg.eigh(samp_covmat)
+            # sort the eigenvector by the eigenvalues
+            ordered_eig = np.sort(eigenval)
+            idx_eig = np.argsort(eigenval)
+            smaller_eigenvec = eigenvec[:, idx_eig[0]]
+            larger_eigenvec = eigenvec[:, idx_eig[1]]
+            smaller_eigenval = ordered_eig[0]
+            larger_eigenval = ordered_eig[1]
+            phi = np.arctan2(larger_eigenvec[1], larger_eigenvec[0])
+            # this angle is between -pi & pi, shift to 0 and 2pi
+            if phi < 0:
+                phi = phi + 2 * np.pi
+        except:
+            print('Unable to run eigen value decomposition. Probably data have only 1 sample')
+            return None
+        theta_grid = np.linspace(0, 2 * np.pi, num=100)
+        # what type of ellipse?
+        if ellipse_type == '1STD':
+            a = np.sqrt(larger_eigenval)
+            b = np.sqrt(smaller_eigenval)
+        elif ellipse_type == '2STD':
+            a = 2 * np.sqrt(larger_eigenval)
+            b = 2 * np.sqrt(smaller_eigenval)
+        elif ellipse_type == 'SEMarea':
+            # scale ellipse's area by sqrt(n)
+            a = np.sqrt(larger_eigenval / np.sqrt(n))
+            b = np.sqrt(smaller_eigenval / np.sqrt(n))
+        elif ellipse_type == 'SEM' or ellipse_type == 'SEMellipse':
+            # contour at stdDev/sqrt(n)
+            a = np.sqrt(larger_eigenval) / np.sqrt(n)
+            b = np.sqrt(smaller_eigenval) / np.sqrt(n)
+        elif 'CI' in ellipse_type:
+            # following Eqn. 5-19 Johnson & Wichern (2007)
+            try:
+                crit_val = float(ellipse_type[:-3]) / 100
+            except:
+                print('ellipse_type incorrectly formatted, please see docstring')
+                return None
+            assert crit_val < 1.0 and crit_val > 0.0, 'ellipse_type CI range must be between 0 & 100'
+            t0_sqrd = ((n - 1) * 2) / (n * (n - 2)) * stats.f.ppf(crit_val, 2, n - 2)
+            a = np.sqrt(larger_eigenval * t0_sqrd)
+            b = np.sqrt(smaller_eigenval * t0_sqrd)
+        else:
+            print('ellipse_type Input incorrect, please see docstring')
+            return None
 
-    # invert phase, so that positive values indicate rightward shift,
-    # and negative indicate leftward shift, relative to the cosine
-    phase_mean = phase_mean * -1
-    # unwrap negative phases
-    if phase_mean < 0:
-        phase_mean = phase_mean + unwrap_factor[return_rad]
+        # the ellipse in x & y coordinates
+        ellipse_x_r = a * np.cos(theta_grid)
+        ellipse_x_r = np.reshape(ellipse_x_r, (ellipse_x_r.shape[0], 1))
+        ellipse_y_r = b * np.sin(theta_grid)
+        ellipse_y_r = np.reshape(ellipse_y_r, (ellipse_y_r.shape[0], 1))
 
-    # if ellipse overlaps with origin, defined by whether phase angles in all 4 quadrants
-    phaseAngles[phaseAngles < 0] = phaseAngles[phaseAngles < 0] + 2 * np.pi
+        # Define a rotation matrix
+        R = np.array([[np.cos(phi), np.sin(phi)], [-np.sin(phi), np.cos(phi)]])
+        # rotate ellipse to some angle phi
+        error_ellipse = np.dot(np.concatenate((ellipse_x_r, ellipse_y_r), axis=1), R)
+        # shift to be centered on mean coordinate
+        error_ellipse = np.add(error_ellipse, mean_data)
 
-    quad1 = phaseAngles[(phaseAngles > 0) & (phaseAngles < np.pi / 2)]
-    quad2 = phaseAngles[(phaseAngles > np.pi / 2) & (phaseAngles < np.pi)]
-    quad3 = phaseAngles[(phaseAngles > np.pi / 2) & (phaseAngles < 3 * np.pi / 2)]
-    quad4 = phaseAngles[(phaseAngles > 3 * np.pi / 2) & (phaseAngles < 2 * np.pi)]
-    if len(quad1) > 0 and len(quad2) > 0 and len(quad3) > 0 and len(quad4) > 0:
-        amp_bounds = np.array([0, ampMaxNorm])
-        maxVals = np.array([360, 2 * np.pi])
-        phaseBounds = np.array([0, maxVals[return_rad]])
-        phase_diff = np.array([np.absolute(phaseBounds[0] - phase_mean),
-                               np.absolute([phaseBounds[1] - phase_mean])], ndmin=2)
-    else:
-        phase_diff = np.array([np.absolute(phaseBounds[0] - phase_mean), np.absolute(phaseBounds[1] - phase_mean)],
-                              ndmin=2)
+        # find vector length of each point on ellipse
+        norms = np.linalg.norm(error_ellipse, axis=1)
+        amp_bounds = np.array([np.min(norms), np.max(norms)])
+        amp_idx = np.array([np.argmin(norms), np.argmax(norms)])
+        amp_mean = np.linalg.norm(mean_data)
 
-    # unwrap phase diff for any ellipse that overlaps with positive x axis
+        # calculate phase angles &
+        phase_angles = np.arctan2(error_ellipse[:, 1], error_ellipse[:, 0])
+        phase_angles[phase_angles < 0] = phase_angles[phase_angles < 0] + 2 * np.pi
 
-    phase_diff[phase_diff > unwrap_factor[return_rad] / 2] = unwrap_factor[return_rad] - phase_diff[
-        phase_diff > unwrap_factor[return_rad] / 2]
-    amp_diff = np.array([amp_mean - amp_bounds[0], amp_bounds[1] - amp_mean], ndmin=2)
+        # if ellipse overlaps with origin, defined by whether phase angles in all 4 quadrants
+        quad = []
+        quad.append( len(phase_angles[(phase_angles > 0) & (phase_angles < np.pi / 2)]) > 0 )
+        quad.append( len(phase_angles[(phase_angles > np.pi / 2) & (phase_angles < np.pi)]) > 0 )
+        quad.append( len(phase_angles[(phase_angles > np.pi / 2) & (phase_angles < 3 * np.pi / 2)]) > 0 )
+        quad.append( len(phase_angles[(phase_angles > 3 * np.pi / 2) & (phase_angles < 2 * np.pi)]) > 0 )
 
-    zSNR = amp_mean / np.mean(np.array([amp_mean - amp_bounds[0], amp_bounds[1] - amp_mean]))
+        phase_mean = np.arctan2(mean_data[1], mean_data[0]) * conv_factor[return_rad]
+        # invert phase mean, so that positive values indicate rightward shift,
+        # and negative indicate leftward shift, relative to the cosine
+        phase_mean = phase_mean * -1
+        # unwrap negative phases
+        if phase_mean < 0:
+            phase_mean = phase_mean + unwrap_factor[return_rad]
 
-    # Data plot
-    if make_plot:
-        # Below makes 2 subplots
-        plt.figure(figsize=(9, 9))
-        font = {'size': 16, 'color': 'k', 'weight': 'light'}
-        # Figure 1 - eigen vector & SEM ellipse
-        plt.subplot(1, 2, 1)
-        plt.plot(xydata[:, 0], xydata[:, 1], 'ko', markerfacecolor='k')
-        plt.plot([0, mean_xy[0]], [0, mean_xy[1]], linestyle='solid', color='k', linewidth=1)
-        # plot ellipse
-        plt.plot(error_ellipse[:, 0], error_ellipse[:, 1], 'b-', linewidth=1, label=ellipse_type + ' ellipse')
-        # plot smaller eigen vec
-        small_eigen_mean = [np.multiply(np.sqrt(smaller_eigenval), smaller_eigenvec[0]) + mean_xy[0],
-                            np.multiply(np.sqrt(smaller_eigenval), smaller_eigenvec[1]) + mean_xy[1]]
-        plt.plot([mean_xy[0], small_eigen_mean[0]], [mean_xy[1], small_eigen_mean[1]], 'g-',
-                 linewidth=1, label='smaller eigen vec')
-        # plot larger eigen vec
-        large_eigen_mean = [np.multiply(np.sqrt(larger_eigenval), larger_eigenvec[0]) + mean_xy[0],
-                            np.multiply(np.sqrt(larger_eigenval), larger_eigenvec[1]) + mean_xy[1]]
-        plt.plot([mean_xy[0], large_eigen_mean[0]], [mean_xy[1], large_eigen_mean[1]], 'm-',
-                 linewidth=1, label='larger eigen vec')
-        # add axes
-        plt.axhline(color='k', linewidth=1)
-        plt.axvline(color='k', linewidth=1)
-        plt.legend(loc=3, frameon=False)
-        plt.axis('equal')
+        if all(quad):
+            amp_bounds = np.array([0, amp_bounds[1]])
+            phase_bounds = np.array([0, unwrap_factor[return_rad]])
+        else:
+            if quad[3]:
+                # wrap to -pi - pi
+                phase_angles = (phase_angles + np.pi) % (2 * np.pi) - np.pi
+                diff_phase = np.max(phase_angles) - np.min(phase_angles)
+                phase_idx = np.array([np.argmin(phase_angles), np.argmax(phase_angles)])
+                phase_angles[phase_angles < 0] = phase_angles[phase_angles < 0] + 2 * np.pi
+            else:
+                diff_phase = np.max(phase_angles) - np.min(phase_angles)
+                phase_idx = np.array([np.argmin(phase_angles), np.argmax(phase_angles)])
 
-        # Figure 2 - mean amplitude, phase and amplitude bounds
-        plt.subplot(1, 2, 2)
-        # plot error Ellipse
-        plt.plot(error_ellipse[:, 0], error_ellipse[:, 1], color='k', linewidth=1)
+            # invert phase bounds, and convert to 0 to 2*pi or 0 to 360,
+            phase_bounds = np.array([ phase_angles[x] * conv_factor[return_rad] for x in phase_idx ]) * -1
+            phase_bounds[phase_bounds < 0] = phase_bounds[phase_bounds < 0] + unwrap_factor[return_rad]
+            phase_bounds = np.sort(phase_bounds)
 
-        # plot ampl. bounds
-        plt.plot([0, error_ellipse[ampMinNormIx, 0]], [0, error_ellipse[ampMinNormIx, 1]],
-                 color='r', linestyle='--')
-        plt.plot([0, error_ellipse[ampMaxNormIx, 0]], [0, error_ellipse[ampMaxNormIx, 1]],
-                 color='r', label='ampl. bounds', linestyle='--')
-        font['color'] = 'r'
-        plt.text(error_ellipse[ampMinNormIx, 0], error_ellipse[ampMinNormIx, 1],
-                 round(ampMinNorm, 2), fontdict=font)
-        plt.text(error_ellipse[ampMaxNormIx, 0], error_ellipse[ampMaxNormIx, 1],
-                 round(ampMaxNorm, 2), fontdict=font)
+        phase_diff = np.array([np.absolute(phase_bounds[0] - phase_mean),
+                               np.absolute(phase_bounds[1] - phase_mean)], ndmin=2)
 
-        # plot phase bounds
-        plt.plot([0, error_ellipse[phaseMinIx, 0]], [0, error_ellipse[phaseMinIx, 1]],
-                 color='b', linewidth=1)
-        plt.plot([0, error_ellipse[phaseMaxIx, 0]], [0, error_ellipse[phaseMaxIx, 1]],
-                 color='b', linewidth=1, label='phase bounds')
-        font['color'] = 'b'
-        plt.text(error_ellipse[phaseMinIx, 0], error_ellipse[phaseMinIx, 1],
-                 round(phaseEllipseExtremes[0], 2), fontdict=font)
-        plt.text(error_ellipse[phaseMaxIx, 0], error_ellipse[phaseMaxIx, 1],
-                 round(phaseEllipseExtremes[1], 2), fontdict=font)
+        # unwrap phase diff for any ellipse that overlaps with positive x axis
+        phase_diff[phase_diff > unwrap_factor[return_rad] / 2] = unwrap_factor[return_rad] - phase_diff[phase_diff > unwrap_factor[return_rad] / 2]
+        amp_diff = np.array([amp_mean - amp_bounds[0], amp_bounds[1] - amp_mean], ndmin=2)
+        z_snr = amp_mean / np.mean(np.array([amp_mean - amp_bounds[0], amp_bounds[1] - amp_mean]))
 
-        # plot mean vector
-        plt.plot([0, mean_xy[0]], [0, mean_xy[1]], color='k', linewidth=1, label='mean ampl.')
-        font['color'] = 'k'
-        plt.text(mean_xy[0], mean_xy[1], round(amp_mean, 2), fontdict=font)
+        amp_out[(slice(None),) + idx] = np.insert(amp_diff.tolist(),0, amp_mean)
+        phase_out[(slice(None),) + idx] = np.insert(phase_diff.tolist(), 0, phase_mean)
+        snr_out[idx] = z_snr
 
-        # plot major/minor axis
-        plt.plot([mean_xy[0], a * larger_eigenvec[0] + mean_xy[0]],
-                 [mean_xy[1], a * larger_eigenvec[1] + mean_xy[1]],
-                 color='m', linewidth=1)
-        plt.plot([mean_xy[0], -a * larger_eigenvec[0] + mean_xy[0]],
-                 [mean_xy[1], -a * larger_eigenvec[1] + mean_xy[1]],
-                 color='m', linewidth=1)
-        plt.plot([mean_xy[0], b * smaller_eigenvec[0] + mean_xy[0]],
-                 [mean_xy[1], b * smaller_eigenvec[1] + mean_xy[1]],
-                 color='g', linewidth=1)
-        plt.plot([mean_xy[0], -b * smaller_eigenvec[0] + mean_xy[0]],
-                 [mean_xy[1], -b * smaller_eigenvec[1] + mean_xy[1]],
-                 color='g', linewidth=1)
+        # Data plot
+        if make_plot:
+            # Below makes 2 subplots
+            plt.figure(figsize=(9, 9))
+            font = {'size': 16, 'color': 'k', 'weight': 'light'}
+            # Figure 1 - eigen vector & SEM ellipse
+            plt.subplot(1, 2, 1)
+            plt.plot(real_data, imag_data, 'ko', markerfacecolor='k')
+            plt.plot([0, mean_data[0]], [0, mean_data[1]], linestyle='solid', color='k', linewidth=1)
+            # plot ellipse
+            plt.plot(error_ellipse[:, 0], error_ellipse[:, 1], 'b-', linewidth=1, label=ellipse_type + ' ellipse')
+            # plot smaller eigen vec
+            small_eigen_mean = [np.multiply(np.sqrt(smaller_eigenval), smaller_eigenvec[0]) + mean_data[0],
+                                np.multiply(np.sqrt(smaller_eigenval), smaller_eigenvec[1]) + mean_data[1]]
+            plt.plot([mean_data[0], small_eigen_mean[0]], [mean_data[1], small_eigen_mean[1]], 'g-', linewidth=1, label='smaller eigen vec')
+            # plot larger eigen vec
+            large_eigen_mean = [np.multiply(np.sqrt(larger_eigenval), larger_eigenvec[0]) + mean_data[0],
+                                np.multiply(np.sqrt(larger_eigenval), larger_eigenvec[1]) + mean_data[1]]
+            plt.plot([mean_data[0], large_eigen_mean[0]], [mean_data[1], large_eigen_mean[1]], 'm-',
+                     linewidth=1, label='larger eigen vec')
+            # add axes
+            plt.axhline(color='k', linewidth=1)
+            plt.axvline(color='k', linewidth=1)
+            plt.legend(loc=3, frameon=False)
+            plt.axis('equal')
 
-        plt.axhline(color='k', linewidth=1)
-        plt.axvline(color='k', linewidth=1)
-        plt.legend(loc=3, frameon=False)
-        plt.axis('equal')
-        plt.show()
-    return amp_mean, amp_diff, phase_mean, phase_diff, zSNR, error_ellipse
+            # Figure 2 - mean amplitude, phase and amplitude bounds
+            plt.subplot(1, 2, 2)
+            # plot error Ellipse
+            plt.plot(error_ellipse[:, 0], error_ellipse[:, 1], color='k', linewidth=1)
+
+            # plot ampl. bounds
+            plt.plot([0, error_ellipse[amp_idx[0], 0]], [0, error_ellipse[amp_idx[0], 1]],
+                     color='r', linestyle='--')
+            plt.plot([0, error_ellipse[amp_idx[1], 0]], [0, error_ellipse[amp_idx[1], 1]],
+                     color='r', label='amp bounds: {:2.2f}-{:2.2f}'.format(amp_bounds[0],amp_bounds[1]), linestyle='--')
+            font['color'] = 'r'
+
+            # plot phase bounds
+            plt.plot([0, error_ellipse[phase_idx[0], 0]], [0, error_ellipse[phase_idx[0], 1]],
+                     color='b', linewidth=1)
+            plt.plot([0, error_ellipse[phase_idx[1], 0]], [0, error_ellipse[phase_idx[1], 1]],
+                     color='b', linewidth=1, label='phase bounds: {:2.2f}-{:2.2f}'.format(phase_bounds[0],phase_bounds[1]))
+            font['color'] = 'b'
+
+            # plot mean vector
+            plt.plot([0, mean_data[0]], [0, mean_data[1]], color='k', linewidth=1, label='mean ampl.')
+            font['color'] = 'k'
+            plt.text(mean_data[0], mean_data[1], "({:2.2f},{:2.2f})".format(amp_mean,phase_mean), fontdict=font)
+
+            # plot major/minor axis
+            plt.plot([mean_data[0], a * larger_eigenvec[0] + mean_data[0]],
+                     [mean_data[1], a * larger_eigenvec[1] + mean_data[1]],
+                     color='m', linewidth=1)
+            plt.plot([mean_data[0], -a * larger_eigenvec[0] + mean_data[0]],
+                     [mean_data[1], -a * larger_eigenvec[1] + mean_data[1]],
+                     color='m', linewidth=1)
+            plt.plot([mean_data[0], b * smaller_eigenvec[0] + mean_data[0]],
+                     [mean_data[1], b * smaller_eigenvec[1] + mean_data[1]],
+                     color='g', linewidth=1)
+            plt.plot([mean_data[0], -b * smaller_eigenvec[0] + mean_data[0]],
+                     [mean_data[1], -b * smaller_eigenvec[1] + mean_data[1]],
+                     color='g', linewidth=1)
+            plt.axhline(color='k', linewidth=1)
+            plt.axvline(color='k', linewidth=1)
+            plt.legend(loc=3, frameon=False)
+            plt.axis('equal')
+            plt.show()
+    return amp_out, phase_out, snr_out
 
 
-def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"):
+def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang", fs_dir=None):
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
     # roi_labels = ["V1d", "V1v", "V2d", "V2v", "V3A", "V3B", "V3d", "LO1", "TO1", "V3v", "VO1", "hV4"]
     if roi_labels == "wang":
-        label_path = "{0}/ROI_TEMPLATES/Wang2015/ROIfiles_Labeling.txt".format(os.environ["SUBJECTS_DIR"])
+        label_path = "{0}/ROI_TEMPLATES/Wang2015/ROIfiles_Labeling.txt".format(fs_dir)
         with open(label_path) as f:
             roi_labels = f.readlines()
             # you may also want to remove whitespace characters like `\n` at the end of each line
@@ -2405,9 +2660,8 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
 
     return calc_cmd
 
-
-def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='All', roi_type='wang+benson',
-                 data_spec={}, in_format=".gii", tasks='All', offset=0, report_timing=True, pre_tr=0):
+def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+benson',
+                 data_spec={}, in_format=".gii", tasks='All', offset=0, report_timing=True, pre_tr=0, overwrite=False):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -2460,9 +2714,13 @@ def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='Al
         a list of strings, containing RoIs
     """
     t = time.time()
+
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
+
     if subjects == 'All':
         subjects = [x for x in os.listdir(exp_folder) if 'sub' in x and os.path.isdir(os.path.join(exp_folder, x))]
-    out_dic = {}
     if tasks == None:
         tasks = dict.fromkeys(["no task"], [pre_tr, offset])
     elif type(tasks) is not dict:
@@ -2480,137 +2738,59 @@ def subject_analysis(exp_folder, fs_dir=os.environ["SUBJECTS_DIR"], subjects='Al
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
         tasks = dict.fromkeys(task_list, [])
-    for task in tasks.keys():
-        # dictionary takes precedence
-        if "offset" in tasks[task].keys():
-            offset = tasks[task]["offset"]
-        if "pre_tr" in tasks[task].keys():
-            pre_tr = tasks[task]["pre_tr"]
-        for sub_int, sub in enumerate(subjects):
+
+    print_wrap("running subject analysis ...")
+    out_dict = {}
+    for task_idx, task in enumerate(tasks.keys()):
+        first_loop = True
+        out_dict[task] = []
+        for sub_idx, sub in enumerate(subjects):
+            # dictionary takes precedence
+            if "offset" in tasks[task].keys():
+                offset = tasks[task]["offset"]
+            if "pre_tr" in tasks[task].keys():
+                pre_tr = tasks[task]["pre_tr"]
             # produce list of files
             if task is "no task":
-                surf_files, out_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
-                if sub_int == 0:
-                    print_wrap(
-                        "Running subject_analysis without considering task, pre-tr: {0}, offset: {1}".format(pre_tr,
-                                                                                                            offset))
+                surf_files, cur_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
+                print_wrap("analyzing {0} without considering task, pre-tr: {1}, offset: {2}".format(sub, pre_tr, offset), indent=1)
             else:
                 data_spec["task"] = task
                 surf_files, cur_spec = get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
-                if sub_int == 0:
-                    print_wrap(
-                        "Running subject_analysis on task {0}, pre-tr: {1}, offset: {2}".format(task, pre_tr, offset))
+                print_wrap("analyzing {0} on task {1}, pre-tr: {2}, offset: {3}".format(sub, task, pre_tr, offset), indent=1)
+
+            file_written = 0
+            if first_loop:
+                out_spec = cur_spec
             if len(surf_files) > 0:
-                # run roi_get_data
-                outdata, cur_names = roi_get_data(surf_files, roi_type=roi_type, fs_dir=fs_dir, pre_tr=pre_tr,
-                                                 offset=offset)
-                # Define the empty array we want to fill or concatenate together
-                if sub_int == 0:
-                    outdata_arr = np.array(outdata, ndmin=2)
-                    roi_names = cur_names
-                    out_spec = cur_spec
-                else:
-                    outdata_arr = np.concatenate((outdata_arr, np.array(outdata, ndmin=2)), axis=0)
-                    assert roi_names == cur_names, "roi names do not match across subjects"
-                    assert {**out_spec} == {**cur_spec}, "specs do not match across subjects"
-        out_dic[task] = {"data": outdata_arr, "pre_tr": pre_tr, "offset": offset, "roi_names": roi_names, **out_spec}
+                rep_start = surf_files[0].index("run-")
+                rep_end = surf_files[0].index("space-")
+                pkl_path = surf_files[0].replace(surf_files[0][rep_start:rep_end], '')
+                pkl_path = pkl_path.replace(in_format, '.pkl')
+                pkl_path = pkl_path.replace('.L.', '.')
+                pkl_path = pkl_path.replace('.R.', '.')
+                pkl_path = "{0}/{1}_{2}".format(os.path.dirname(pkl_path), roi_type, pkl_path.split('/')[-1])
+
+                if not os.path.isfile(pkl_path) or overwrite:
+                    # run roi_get_data
+                    out_data = roi_get_data(surf_files, roi_type=roi_type, fs_dir=fs_dir, pre_tr=pre_tr,
+                                                     offset=offset)
+                    if first_loop:
+                        out_names = out_data.roi_names
+                        first_loop = False
+                    else:
+                        assert out_names == out_data.roi_names, "roi names do not match across subjects"
+                        assert {**out_spec} == {**cur_spec}, "specs do not match across subjects"
+                    write(pkl_path, out_data)
+                    file_written = 1 + int(os.path.isfile(pkl_path))  # 2 means overwritten
+                out_dict[task].append({"file_path": pkl_path, "file_written": file_written, "pre_tr":pre_tr, **out_spec})
     if report_timing:
         elapsed = time.time() - t
-        print_wrap("subject_analysis complete, took {0} seconds".format(elapsed))
-    return out_dic
+        print_wrap("subject_analysis complete, took {:02.2f} minutes".format(elapsed/60))
+    return out_dict
 
-
-def whole_group(subject_data, harmonic_list=['1'], return_rad=True):
-    """ Perform group analysis on subject data output from RoiSurfData.
-    Parameters
-    ------------
-    subject_data : numpy array
-        create this input using combineHarmonics()
-        array dimensions: (roi_number, harmonic_number, subject_number)
-    output : string or list or strs, default 'all'
-        Can specify what output you would like.
-        These are phase difference, amp difference and zSNR
-        Options: 'all', 'phase', 'amp', 'zSNR',['phase','amp'] etc
-    return_rad : boolean, default True
-        Specify to return values in radians or degrees
-    
-    Returns
-    ------------
-    group_dictionary : dictionary
-        broken down by task to include:
-            ampPhaseZSNR_df : pd.DataFrame,
-                contains RoIs as index, amp difference lower/upper, 
-                phase difference lower/upper, zSNR
-            error_ellipse_dic : dictionary,
-                contains a dictionary of numpy arrays of the 
-                error ellipses broken down by RoI.
-    """
-    start_time = time.time()
-    print_wrap("Running group whole-brain analysis ...")
-    group_dictionary = {}
-    unwrap_factor = np.array([360, 2 * np.pi])
-    wunwrap_factor = np.array([360, 2 * np.pi])
-    for t, task in enumerate(subject_data.keys()):
-        # dictionary for output of error Ellipse
-        # ellipse_dic={}
-        # number of rois, harmonics, subjects
-        # subjects_n, roi_n = subject_data[task].shape
-        # to be used to create the final columns in the dataframe
-        # harmonic_name_list = ['RoIs']
-        # Loop through harmonics & rois
-        if t == 0:
-            subjects_n = [x[0] for x in [subject_data[x]["data"].shape for x in subject_data.keys()]]
-            sub_str = ', '.join(str(x) for x in subjects_n)
-            roi_n = [x[1] for x in [subject_data[x]["data"].shape for x in subject_data.keys()]]
-            roi_str = ', '.join(str(x) for x in roi_n)
-            print_wrap("{0} conditions, {1} ROIs and {2} subjects".format(len(subject_data.keys()), roi_str, sub_str),
-                       indent=1)
-
-        assert all([x == 2 for x in roi_n]), "expected exactly two rois (one per hemisphere)"
-
-        harmonic_n = len(harmonic_list)
-        for r in range(roi_n[t]):
-
-            for h in range(harmonic_n):
-                # current harmonic 
-                cur_harm = int(harmonic_list[h])
-                xydata = [data.fft.sig_complex[cur_harm - 1] for data in subject_data[task]["data"][:, r]]
-                xydata = np.array(xydata, ndmin=2)
-                if h == 0 and r == 0:
-                    # four values per harmonic: amp, phase, t2 and p-value
-                    group_out = np.empty((xydata.shape[1], harmonic_n * 4, roi_n[t]))
-                # compute elliptical errors
-                split_data = real_imag_split(xydata)
-
-                real_data = np.mean(split_data[:, 0, :], axis=0, keepdims=True)
-                imag_data = np.mean(split_data[:, 1, :], axis=0, keepdims=True)
-
-                group_out[:, h * 4, r] = np.abs(real_data + 1j * imag_data)
-                phase_mean = np.angle(real_data + 1j * imag_data, not return_rad)
-
-                # invert phase, so that positive values indicate rightward shift,
-                # and negative indicate leftward shift, relative to the cosine
-                phase_mean = phase_mean * -1
-
-                # unwrap negative phases
-                phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + unwrap_factor[int(return_rad)]
-
-                group_out[:, h * 4 + 1, r] = phase_mean
-
-                # compute Hotelling's T-squared:
-                cur_hot = [hotelling_t2(xydata[:, x]) for x in range(xydata.shape[1])]
-                # t2 value
-                group_out[:, h * 4 + 2, r] = [x[0] for x in cur_hot]
-                # p-value
-                group_out[:, h * 4 + 3, r] = [x[1] for x in cur_hot]
-
-        group_dictionary[task] = group_out
-        elapsed = time.time() - start_time
-    print_wrap("Group analysis complete, took {0} seconds".format(int(elapsed)))
-    return group_dictionary
-
-
-def roi_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM', make_plot=False, return_rad=True):
+def group_analysis(
+        exp_dir, spec_dict, data_type="roi", harmonic_list=[1], output='all', ellipse_type='SEM', make_plot=False, report_timing=True, return_rad=True):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
     ------------
@@ -2640,8 +2820,142 @@ def roi_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM
                 error ellipses broken down by RoI.
     """
     start_time = time.time()
-    print_wrap("Running group ROI analysis ...")
+    print_wrap("running group {0} analysis ...".format(data_type))
     group_dictionary = {}
+    roi_n = []
+    for t, task in enumerate(spec_dict.keys()):
+        # dictionary for output of error Ellipse
+        # ellipse_dic={}
+        # number of rois, harmonics, subjects
+        # subjects_n, roi_n = subject_data[task].shape
+        # to be used to create the final columns in the dataframe
+        # harmonic_name_list = ['RoIs']
+        # Loop through harmonics & rois
+
+        pkl_files = [ x["file_path"] for x in spec_dict[task] ]
+        for s, file in enumerate(pkl_files):
+            sub_data = read(file)
+            # get complex values
+            temp_data = sub_data.fft()["sig_complex"]
+            all_data[s,:,:] = temp_data[harmonic_list,:]
+            if s == 0 and t == 0:
+                roi_names = sub_data.roi_names
+                all_data = np.zeros((len(pkl_files),temp_data.shape[0],temp_data.shape[1]),dtype="complex128")
+                subjects_n = [len(spec_dict[task]) for task in spec_dict.keys()]
+                sub_str = ', '.join(str(x) for x in subjects_n)
+                print_wrap(
+                    "{0} conditions, {1} ROIs and {2} subjects".format(len(spec_dict.keys()), len(roi_names), sub_str),
+                    indent=1)
+            else:
+                assert roi_names == sub_data.roi_names, "rois not matched across tasks"
+            if s == 0:
+                print_wrap("current condition: {0}".format(task), indent=2)
+
+
+        # only plot harmonic of interest
+        all_data = all_data[:, harmonic_list, :]
+
+        if data_type == "roi":
+            hot_t, hot_p, hot_crit = hotelling_t2(all_data)
+
+            project_amp, project_err, project_t, project_p, project_real, project_imag = vector_projection(all_data)
+
+            amp_out, phase_out, snr_out = fit_error_ellipse(all_data, ellipse_type, make_plot, return_rad)
+            assert amp_out[0, 0] >= 0, "warning: ROI {0} with task {1}: lower error bar is smaller than zero".format(roi, task)
+            assert amp_out[0, 1] >= 0, "warning: ROI {0} with task {1}: upper error bar is smaller than zero".format(roi, task)
+
+            if h == 0:  # first harmonic
+                stats_df = pd.DataFrame(index=harmonic_list,
+                                        columns=['amp_mu', 'ph_mu', 'z_snr', 'el_err_amp', 'el_err_ph', "proj_err",
+                                                 "hotT2", "ttest_1s", "project_sub_amps"])
+            stats_df.at[harm, 'amp_mu'] = amp_mean
+            stats_df.at[harm, 'ph_mu'] = phase_mean
+            stats_df.at[harm, 'z_snr'] = z_snr
+            stats_df.at[harm, 'el_err_amp'] = amp_diff
+            stats_df.at[harm, 'el_err_ph'] = phase_diff
+            stats_df.at[harm, 'proj_err'] = project_err
+            stats_df.at[harm, 'hotT2'] = (hot_t, hot_p)
+            stats_df.at[harm, 'ttest_1s'] = (project_t, project_p)
+            stats_df.at[harm, 'project_sub_amps'] = project_amp
+
+            # compute cycle average and standard error
+            if r == 0:
+                all_cycle = np.asarray([x.fft()["mean_cycle"] for x in sub_data])
+            temp_cycle = all_cycle[:, :, r]
+            cur_cycle_ave = np.mean(temp_cycle, axis=0, keepdims=True)
+            sub_count = np.count_nonzero(~np.isnan(temp_cycle), axis=0)
+            cur_cycle_stderr = np.divide(np.nanstd(temp_cycle, axis=0, keepdims=True), np.sqrt(sub_count))
+
+            cur_obj = {"stats": stats_df, "cycle_ave": cur_cycle_ave, "cycle_err": cur_cycle_stderr,
+                       "roi_name": roi_names[r]}
+            if r == 0:
+                group_out = np.array(cur_obj, ndmin=1)
+            else:
+                group_out = np.concatenate((group_out, np.array(cur_obj, ndmin=1)), axis=0)
+        else:
+            real_mean = np.mean(np.real(all_data), axis=0)
+            imag_mean = np.mean(np.imag(all_data), axis=0)
+            amp_out = np.abs(real_mean + 1j * imag_mean)
+            phase_out = np.angle(real_mean + 1j * imag_mean, not return_rad)
+
+            # invert phase, so that positive values indicate rightward shift,
+            # and negative indicate leftward shift, relative to the cosine
+            phase_out = phase_out * -1
+
+            # unwrap negative phases
+            unwrap_factor = np.array([360, 2 * np.pi])
+            phase_out[phase_out < 0] = phase_out[phase_out < 0] + unwrap_factor[int(return_rad)]
+
+            # four values per harmonic: amp, phase, t2 and p-value
+            group_out = np.empty((len(harmonic_list) * 4, len(roi_names)))
+            group_out[np.arange(0,len(harmonic_list)*4, 4), :] = amp_out
+            group_out[np.arange(1,len(harmonic_list)*4, 4), :] = phase_out
+
+            if "projected" in data_type:
+                # do vector projection
+                project_amp, project_err, t_val, p_val, project_real, project_imag = vector_projection(all_data, test_fig=False)
+            else:
+                # compute Hotelling's T-squared:
+                t_val, p_val, hot_crit = hotelling_t2(all_data)
+            group_out[np.arange(2, len(harmonic_list) * 4, 4), :] = t_val
+            group_out[np.arange(3, len(harmonic_list) * 4, 4), :] = p_val
+
+        group_dictionary[task] = group_out
+    if report_timing:
+        elapsed = time.time() - start_time
+        print_wrap("group analysis complete, took {:02d} seconds".format(round(elapsed)))
+    return group_dictionary
+
+
+def whole_group(exp_folder, harmonic_list=['1'], return_rad=True):
+    """ Perform group analysis on subject data output from RoiSurfData.
+    Parameters
+    ------------
+    subject_data : numpy array
+        create this input using combineHarmonics()
+        array dimensions: (roi_number, harmonic_number, subject_number)
+    output : string or list or strs, default 'all'
+        Can specify what output you would like.
+        These are phase difference, amp difference and zSNR
+        Options: 'all', 'phase', 'amp', 'zSNR',['phase','amp'] etc
+    return_rad : boolean, default True
+        Specify to return values in radians or degrees
+
+    Returns
+    ------------
+    group_dictionary : dictionary
+        broken down by task to include:
+            ampPhaseZSNR_df : pd.DataFrame,
+                contains RoIs as index, amp difference lower/upper,
+                phase difference lower/upper, zSNR
+            error_ellipse_dic : dictionary,
+                contains a dictionary of numpy arrays of the
+                error ellipses broken down by RoI.
+    """
+    start_time = time.time()
+    print_wrap("Running group whole-brain analysis ...")
+    group_dictionary = {}
+    unwrap_factor = np.array([360, 2 * np.pi])
     for t, task in enumerate(subject_data.keys()):
         # dictionary for output of error Ellipse
         # ellipse_dic={}
@@ -2654,81 +2968,51 @@ def roi_group(subject_data, harmonic_list=['1'], output='all', ellipse_type='SEM
             subjects_n = [x[0] for x in [subject_data[x]["data"].shape for x in subject_data.keys()]]
             sub_str = ', '.join(str(x) for x in subjects_n)
             roi_n = [x[1] for x in [subject_data[x]["data"].shape for x in subject_data.keys()]]
-            roi_str = ', '.join(str(x) for x in roi_n);
+            roi_str = ', '.join(str(x) for x in roi_n)
             print_wrap("{0} conditions, {1} ROIs and {2} subjects".format(len(subject_data.keys()), roi_str, sub_str),
                        indent=1)
 
-        roi_names = subject_data[task]["roi_names"]
+        assert all([x == 2 for x in roi_n]), "expected exactly two rois (one per hemisphere)"
 
         harmonic_n = len(harmonic_list)
         for r in range(roi_n[t]):
+
             for h in range(harmonic_n):
-                # current harmonic 
-                cur_harm = harmonic_list[h]
-                # ee_name = '{0}_harmonic_{1}'.format(roi_names[r],cur_harm)
-                xydata = [data.fft.sig_complex[int(cur_harm) - 1] for data in subject_data[task]["data"][:, r]]
+                # current harmonic
+                cur_harm = int(harmonic_list[h])
+                xydata = [data.fft.sig_complex[cur_harm - 1] for data in subject_data[task]["data"][:, r]]
                 xydata = np.array(xydata, ndmin=2)
-
+                if h == 0 and r == 0:
+                    # four values per harmonic: amp, phase, t2 and p-value
+                    group_out = np.empty((xydata.shape[1], harmonic_n * 4, roi_n[t]))
                 # compute elliptical errors
-                amp_mean, amp_diff, phase_mean, phase_diff, z_snr, error_ellipse = fit_error_ellipse(xydata, ellipse_type, make_plot, return_rad)
+                split_data = real_imag_split(xydata)
 
-                assert amp_diff[
-                           0, 0] >= 0, "warning: ROI {0} with task {1}: lower error bar is smaller than zero".format(
-                    roi_names[r], task)
-                assert amp_diff[
-                           0, 1] >= 0, "warning: ROI {0} with task {1}: upper error bar is smaller than zero".format(
-                    roi_names[r], task)
+                real_data = np.mean(split_data[:, 0, :], axis=0, keepdims=True)
+                imag_data = np.mean(split_data[:, 1, :], axis=0, keepdims=True)
 
+                group_out[:, h * 4, r] = np.abs(real_data + 1j * imag_data)
+                phase_mean = np.angle(real_data + 1j * imag_data, not return_rad)
+
+                # invert phase, so that positive values indicate rightward shift,
+                # and negative indicate leftward shift, relative to the cosine
+                phase_mean = phase_mean * -1
+
+                # unwrap negative phases
+                phase_mean[phase_mean < 0] = phase_mean[phase_mean < 0] + unwrap_factor[int(return_rad)]
+
+                group_out[:, h * 4 + 1, r] = phase_mean
+
+                project_amp, project_err, project_test, project_real, project_imag = vector_projection(xydata,
+                                                                                                       test_fig=False)
                 # compute Hotelling's T-squared:
-                hot_tval, hot_pval, hot_crit = hotelling_t2(xydata)
-
-                # do vector projection
-                project_amp, project_err, project_test, project_real, project_imag = vector_projection(xydata, test_fig=False)
-                if h == 0:  # first harmonic
-                    stats_df = pd.DataFrame(index=harmonic_list,
-                        columns=['amp_mu', 'ph_mu', 'z_snr', 'el_err_amp', 'el_err_ph', "proj_err", "hotT2", "ttest_1s","project_sub_amps"])
-                stats_df.at[cur_harm, 'amp_mu'] = amp_mean
-                stats_df.at[cur_harm, 'ph_mu'] = phase_mean
-                stats_df.at[cur_harm, 'z_snr'] = z_snr
-                stats_df.at[cur_harm, 'el_err_amp'] = amp_diff
-                stats_df.at[cur_harm, 'el_err_ph'] = phase_diff
-                stats_df.at[cur_harm, 'proj_err'] = project_err
-                stats_df.at[cur_harm, 'hotT2'] = (hot_tval, hot_pval)
-                stats_df.at[cur_harm, 'ttest_1s'] = project_test
-                stats_df.at[cur_harm, 'project_sub_amps'] = project_amp
-            # compute cycle average and standard error
-            temp_cycle = [data.fft.mean_cycle for data in subject_data[task]["data"][:, r]]
-            temp_cycle = np.squeeze(np.asarray(temp_cycle))
-            cur_cycle_ave = np.array(np.mean(temp_cycle, axis=0), ndmin=2)
-            sub_count = np.count_nonzero(~np.isnan(temp_cycle), axis=0)
-            cur_cycle_stderr = np.array(np.divide(np.nanstd(temp_cycle, axis=0), np.sqrt(sub_count)), ndmin=2)
-
-            cur_obj = {"stats": stats_df, "cycle_ave": cur_cycle_ave, "cycle_err": cur_cycle_stderr, "roi_name":roi_names[r]}
-            if r == 0:
-                group_out = np.array(cur_obj, ndmin=1)
-            else:
-                group_out = np.concatenate((group_out, np.array(cur_obj, ndmin=1)), axis=0)
+                cur_hot = [hotelling_t2(xydata[:, x]) for x in range(xydata.shape[1])]
+                # t2 value
+                group_out[:, h * 4 + 2, r] = [x[0] for x in cur_hot]
+                # p-value
+                group_out[:, h * 4 + 3, r] = [x[1] for x in cur_hot]
 
         group_dictionary[task] = group_out
         elapsed = time.time() - start_time
     print_wrap("Group analysis complete, took {0} seconds".format(int(elapsed)))
     return group_dictionary
-
-
-# used by roi_group_analysis
-class groupobject:
-    def __init__(self, amp=np.zeros((3, 1)), phase=np.zeros((3, 1)), zSNR=0, hotT2=np.zeros((2, 1)),
-                 vecT=np.zeros((2, 1)), vecErr=0,
-                 cycle=np.zeros((2, 12)), harmonics="1", roi_name="unknown"):
-        self.amp = amp
-        self.phase = phase
-        self.zSNR = zSNR
-        self.hotT2 = hotT2
-        self.cycle_average = cycle[0,]
-        dim1, dim2 = np.shape(cycle)
-        if dim1 == 2:
-            self.cycle_err = cycle[1,]
-        else:
-            self.cycle_err = []
-        self.roi_name = roi_name
-        self.harmonics = harmonics
