@@ -2750,7 +2750,7 @@ def group_compare(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
     for  cur_exp in exp_dir:
         out_dict = subject_analysis(exp_folder=exp_dir, fs_dir=fs_dir, tasks=tasks, roi_type=roi_type, data_spec=data_spec, in_format=".gii", overwrite=overwrite)
 
-def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi_type="whole", harmonic_list=[1], output='all', ellipse_type='SEM', return_rad=True, report_timing=True, overwrite=False):
+def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi_type="whole", harmonic_list=["1"], output='all', ellipse_type='SEM', return_rad=True, report_timing=True, overwrite=False):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
     ------------
@@ -2788,7 +2788,6 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
     make_plot = False
 
     out_dict = subject_analysis(exp_folder=exp_dir, fs_dir=fs_dir, tasks=tasks, roi_type=roi_type, data_spec=data_spec, in_format=".gii", overwrite=overwrite)
-
     for t, task in enumerate(out_dict.keys()):
         for s, sub_data in enumerate(out_dict[task]["data"]):
             # get complex values
@@ -2832,6 +2831,7 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
                     cycle_ave = np.mean(all_cycle, axis=0, keepdims=True)
                     sub_count = np.count_nonzero(~np.isnan(all_cycle), axis=0)
                     cycle_stderr = np.divide(np.nanstd(all_cycle, axis=0, keepdims=True), np.sqrt(sub_count))
+                    group_out = {}
                     group_out[harm] = {"stats": stats_df, "cycle_ave": cycle_ave, "cycle_err": cycle_stderr}
                 else:
                     group_out[harm] = {"stats": stats_df}
