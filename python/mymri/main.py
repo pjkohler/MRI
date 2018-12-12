@@ -2685,9 +2685,7 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
                 roi_get_cached.clear(warn=False)
 
             # run roi_get_data
-            cur_t = time.time()
             sub_data, sub_vox, out_label, task_list = roi_get_cached(surf_files, roi_type=roi_type, fs_dir=fs_dir)
-            print_wrap(time.time()- cur_t)
             for t, task in enumerate(tasks.keys()):
                 # dictionary takes precedence
                 if "offset" in tasks[task].keys():
@@ -2713,10 +2711,10 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
 
                     if first_loop:
                         out_spec = cur_spec
-                        out_names = out_obj.roi_names
+                        out_names = out_label
                         first_loop = False
                     else:
-                        assert out_names == out_obj.roi_names, "roi names do not match across subjects"
+                        assert out_names == out_label, "roi names do not match across subjects"
                         assert {**out_spec} == {**cur_spec}, "specs do not match across subjects"
 
                     if task in out_dict:
