@@ -2832,12 +2832,16 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
 
                 # compute cycle average and standard error, only once
                 if h == 0:
+
                     all_cycle = np.array([x["mean_cycle"] for x in out_dict[task]["data"]])
                     cycle_ave = np.mean(all_cycle, axis=0, keepdims=True)
                     sub_count = np.count_nonzero(~np.isnan(all_cycle), axis=0)
                     cycle_stderr = np.divide(np.nanstd(all_cycle, axis=0, keepdims=True), np.sqrt(sub_count))
+                    cycle_df = pd.DataFrame(index=roi_names, columns=['ave', 'stderr'])
+                    cycle_df.at[roi_names, 'ave'] = [(cycle_ave[:, :, x]) for x in range(all_data.shape[2])]
+                    cycle_df.at[roi_names, 'stderr'] = [(cycle_stderr[:, :, x]) for x in range(all_data.shape[2])]
                     group_out = {}
-                    group_out[harm] = {"stats": stats_df, "cycle_ave": cycle_ave, "cycle_err": cycle_stderr}
+                    group_out[harm] = {"stats": stats_df, "cycle": cycle_df}
                 else:
                     group_out[harm] = {"stats": stats_df}
 
