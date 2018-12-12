@@ -2816,6 +2816,7 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
             for h, harm in enumerate(harmonic_list):
                 stats_df = pd.DataFrame(index=roi_names,columns=['amp_mu', 'ph_mu', 'z_snr', 'el_err_amp', 'el_err_ph', "proj_err",
                                                  "hotT2", "ttest_1s", "project_sub_amps"])
+                stats_df.at[roi_names, 'amp_mu'] = amp_out[0, h, :]
                 stats_df.at[roi_names, 'ph_mu'] = phase_out[0, h, :]
                 stats_df.at[roi_names, 'z_snr'] = snr_out[h, :]
                 stats_df.at[roi_names, 'el_err_amp'] = [(amp_out[1:, h, x]) for x in range(all_data.shape[2])]
