@@ -2787,6 +2787,10 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
     roi_n = []
     make_plot = False
 
+    if any(isinstance(x, int) for x in harmonic_list):
+        harmonic_list = [str(x) for x in harmonic_list]
+    assert all(float(x) > 0 for x in harmonic_list), "harmonic_list must be a list of named harmonics, not zero-based indices"
+
     out_dict = subject_analysis(exp_folder=exp_dir, fs_dir=fs_dir, tasks=tasks, roi_type=roi_type, data_spec=data_spec, in_format=".gii", overwrite=overwrite)
     for t, task in enumerate(out_dict.keys()):
         for s, sub_data in enumerate(out_dict[task]["data"]):
@@ -2801,7 +2805,7 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
             all_data[s, :, :] = temp_data
 
         # only plot harmonic of interest
-        harmonic_idx = [int(float(x-1)) for x in harmonic_list ]
+        harmonic_idx = [int(float(x) - 1) for x in harmonic_list]
         all_data = all_data[:, harmonic_idx, :]
 
         if roi_type not in ["whole"]:
