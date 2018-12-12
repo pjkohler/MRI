@@ -2801,7 +2801,8 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
             all_data[s, :, :] = temp_data
 
         # only plot harmonic of interest
-        all_data = all_data[:, harmonic_list, :]
+        harmonic_idx = [int(float(x-1)) for x in harmonic_list ]
+        all_data = all_data[:, harmonic_idx, :]
 
         if roi_type not in ["whole"]:
             hot_t, hot_p, hot_crit = hotelling_t2(all_data)
