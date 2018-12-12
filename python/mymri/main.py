@@ -1973,7 +1973,7 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
 
     return all_data, all_vox, cur_label, task_list
 
-def hotelling_t2(dset1=np.zeros((15,3,4), dtype=np.complex), dset2=np.zeros((1, 1), dtype=np.complex), test_type="hot_dep", test_mode=False):
+def hotelling_t2(dset1=np.zeros((15,3,4), dtype=np.complex), dset2=np.zeros((1, 1), dtype=np.complex), test_type="hot_dep", demo_mode=False):
     t = time.time()
     assert test_type != "tcirc", "tcirc not currently supported"
     if not dset1.any():
@@ -2032,7 +2032,7 @@ def hotelling_t2(dset1=np.zeros((15,3,4), dtype=np.complex), dset2=np.zeros((1, 
             # make sure that one-sample test was done
             assert "Hotelling's one sample T2-test" in hot_r.rx2('method')
 
-            if test_mode:
+            if demo_mode:
                 # COMPUTE VALUES
                 M = sum(is_nan[cur_idx] == 0)
                 df2 = M - p  # denominator degrees of freedom.
@@ -2087,7 +2087,7 @@ def hotelling_t2(dset1=np.zeros((15,3,4), dtype=np.complex), dset2=np.zeros((1, 
             # make sure that two-sample test was done
             assert "Hotelling's two sample T2-test" in hot_r.rx2('method')
 
-            if test_mode:
+            if demo_mode:
                 # COMPUTE VALUES
                 M_1 = sum(nan_dset1[cur_idx] == 0)
                 M_2 = sum(nan_dset2[cur_idx] == 0)
@@ -2586,8 +2586,7 @@ def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang"
 
     return calc_cmd
 
-def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+benson',
-                 data_spec={}, in_format=".gii", tasks='All', offset=0, pre_tr=0, report_timing=False, overwrite=False):
+def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+benson', harmonic_list=["1"], data_spec={}, in_format=".gii", tasks='All', offset=0, pre_tr=0, report_timing=False, overwrite=False):
     """ Combine data across subjects - across RoIs & Harmonics
     So there might be: 180 RoIs x 5 harmonics x N subjects.
     This can be further split out by tasks. If no task is 
@@ -2706,7 +2705,8 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
                     #out_obj = roiobject(cur_data=sub_data[pre_tr:,:,task_idx], cur_object=None, roi_names=out_label, tr=2.0, stim_freq=10, nharm=5, num_vox=sub_vox, is_time_series=True, offset=offset)
                     #sub_dict = {"sig_complex": out_obj.fft()["sig_complex"], "mean_cycle": out_obj.fft()["mean_cycle"]}
 
-                    out_obj = fft_analysis(np.mean(sub_data[pre_tr:, :, task_idx], axis=2))
+                    max_harm = max([ int(float(x)) for x in harmonic_list ])
+                    out_obj = fft_analysis(np.mean(sub_data[pre_tr:, :, task_idx], axis=2), nharm=max_harm, offset=offset)
                     sub_dict = {"sig_complex": out_obj["sig_complex"], "mean_cycle": out_obj["mean_cycle"]}
 
                     if first_loop:
@@ -2732,25 +2732,63 @@ def group_compare(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
 
     start_time = time.time()
 
-    print_wrap("running group {0} analysis ...".format(roi_type))
+    print_wrap("running group comparison, {0} rois ...".format(roi_type))
     group_dictionary = {}
     roi_n = []
     make_plot = False
 
     if type(exp_dir) is str:
         # make it a list
-        exp_dir = [exp_dir]
+        exp_dir = [exp_dir, exp_dir]
         if not test_type:
             test_type = "hot_dep"
     else:
-        assert type(exp_dir), "exp_dir must be a string or a list"
+        assert type(exp_dir) is list, "exp_dir must be a string or a list"
         # if test_type not given, assume independent test
+        if len(exp_dir) == 1:
+            exp_dir = [ exp_dir[0], exp_dir[0] ]
         if not test_type:
             test_type = "hot_ind"
 
-    comp_dict = {}
-    for  cur_exp in exp_dir:
-        out_dict = subject_analysis(exp_folder=exp_dir, fs_dir=fs_dir, tasks=tasks, roi_type=roi_type, data_spec=data_spec, in_format=".gii", overwrite=overwrite)
+    assert type(tasks) is list and len(tasks) == 2, "task must be a two-element list of dicts"
+    task_list = [ list(tasks[x].keys())[0] for x in range(len(exp_dir)) ]
+
+    if any(isinstance(x, int) for x in harmonic_list):
+        harmonic_list = [str(x) for x in harmonic_list]
+    assert all(float(x) > 0 for x in harmonic_list), "harmonic_list must be a list of named harmonics, not zero-based indices"
+
+    comp_data = []
+    for e, cur_exp in enumerate(exp_dir):
+        comp_dict = subject_analysis(exp_folder=exp_dir[e], fs_dir=fs_dir, tasks=tasks[e], roi_type=roi_type, data_spec=data_spec, in_format=".gii", overwrite=overwrite)
+        for s, sub_data in enumerate(comp_dict[task_list[e]]["data"]):
+            # get complex values
+            temp_data = sub_data["sig_complex"]
+            if s == 0:
+                all_data = np.zeros((len(comp_dict[task_list[e]]["data"]),temp_data.shape[0],temp_data.shape[1]),dtype="complex128")
+                if e == 0:
+                    roi_names = comp_dict[task_list[e]]["roi_names"]
+                else:
+                    assert roi_names == comp_dict[task_list[e]]["roi_names"], "rois not matched across tasks"
+            all_data[s, :, :] = temp_data
+
+        # only plot harmonic of interest
+        harmonic_idx = [int(float(x) - 1) for x in harmonic_list]
+        all_data = all_data[:, harmonic_idx, :]
+        comp_data.append(all_data)
+    hot_t, hot_p, hot_crit = hotelling_t2(dset1=comp_data[0], dset2=comp_data[1], test_type=test_type)
+
+    for h, harm in enumerate(harmonic_list):
+        stats_df = pd.DataFrame(index=roi_names, columns=["hotT2"])
+        stats_df.at[roi_names, 'hotT2'] = [(hot_t[h, x], hot_p[h, x]) for x in range(all_data.shape[2])]
+        if h == 0:
+            comp_out = {}
+        comp_out[harm] = {"stats": stats_df}
+
+    if report_timing:
+        elapsed = time.time() - start_time
+        print_wrap("group comparison complete, task {0} vs {1} ".format(task_list[0], task_list[1]) + "took {:02d} seconds".format(round(elapsed)))
+
+    return comp_out
 
 def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi_type="whole", harmonic_list=["1"], output='all', ellipse_type='SEM', return_rad=True, report_timing=True, overwrite=False):
     """ Perform group analysis on subject data output from RoiSurfData.
@@ -2791,7 +2829,7 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
         harmonic_list = [str(x) for x in harmonic_list]
     assert all(float(x) > 0 for x in harmonic_list), "harmonic_list must be a list of named harmonics, not zero-based indices"
 
-    out_dict = subject_analysis(exp_folder=exp_dir, fs_dir=fs_dir, tasks=tasks, roi_type=roi_type, data_spec=data_spec, in_format=".gii", overwrite=overwrite)
+    out_dict = subject_analysis(exp_folder=exp_dir, fs_dir=fs_dir, tasks=tasks, roi_type=roi_type, data_spec=data_spec, in_format=".gii", harmonic_list=harmonic_list, overwrite=overwrite)
     for t, task in enumerate(out_dict.keys()):
         start_time = time.time()
         for s, sub_data in enumerate(out_dict[task]["data"]):
