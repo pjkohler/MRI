@@ -2726,7 +2726,31 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
         print_wrap("subject_analysis complete, took {:02.2f} minutes".format(elapsed/60))
     return out_dict
 
-def group_analysis(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi_type="whole", harmonic_list=[1], output='all', ellipse_type='SEM', report_timing=True, return_rad=True, overwrite=False):
+def group_compare(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi_type="wang", harmonic_list=[1], test_type = None, report_timing=True, overwrite=False):
+
+    start_time = time.time()
+
+    print_wrap("running group {0} analysis ...".format(roi_type))
+    group_dictionary = {}
+    roi_n = []
+    make_plot = False
+
+    if type(exp_dir) is str:
+        # make it a list
+        exp_dir = [exp_dir]
+        if not test_type:
+            test_type = "hot_dep"
+    else:
+        assert type(exp_dir), "exp_dir must be a string or a list"
+        # if test_type not given, assume independent test
+        if not test_type:
+            test_type = "hot_ind"
+
+    comp_dict = {}
+    for  cur_exp in exp_dir:
+        out_dict = subject_analysis(exp_folder=exp_dir, fs_dir=fs_dir, tasks=tasks, roi_type=roi_type, data_spec=data_spec, in_format=".gii", overwrite=overwrite)
+
+def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi_type="whole", harmonic_list=[1], output='all', ellipse_type='SEM', return_rad=True, report_timing=True, overwrite=False):
     """ Perform group analysis on subject data output from RoiSurfData.
     Parameters
     ------------
@@ -2801,18 +2825,16 @@ def group_analysis(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, ro
                 stats_df.at[roi_names, 'ttest_1s'] = [(project_t[h, x], project_p[h, x]) for x in range(all_data.shape[2])]
                 stats_df.at[roi_names, 'project_sub_amps'] = project_amp[h, :]
 
-            # compute cycle average and standard error, only once
-            if h == 0:
-                all_cycle = np.array([x["mean_cycle"] for x in out_dict[task]["data"]])
-                cycle_ave = np.mean(all_cycle, axis=0, keepdims=True)
-                sub_count = np.count_nonzero(~np.isnan(all_cycle), axis=0)
-                cycle_stderr = np.divide(np.nanstd(all_cycle, axis=0, keepdims=True), np.sqrt(sub_count))
-
-            cur_obj = {"stats": stats_df, "cycle_ave": cycle_ave, "cycle_err": cycle_stderr, "harmonic": harm}
-            if h == 0:
-                group_out = np.array(cur_obj, ndmin=1)
-            else:
-                group_out = np.concatenate((group_out, np.array(cur_obj, ndmin=1)), axis=0)
+                # compute cycle average and standard error, only once
+                if h == 0:
+                    all_cycle = np.array([x["mean_cycle"] for x in out_dict[task]["data"]])
+                    cycle_ave = np.mean(all_cycle, axis=0, keepdims=True)
+                    sub_count = np.count_nonzero(~np.isnan(all_cycle), axis=0)
+                    cycle_stderr = np.divide(np.nanstd(all_cycle, axis=0, keepdims=True), np.sqrt(sub_count))
+                    stats_out = [stats_df]
+                else:
+                    stats_out.append(stats_df)
+            group_out = {"stats": stats_out, "cycle_ave": cycle_ave, "cycle_err": cycle_stderr, "harmonic": harm}
         else:
             real_mean = np.mean(np.real(all_data), axis=0)
             imag_mean = np.mean(np.imag(all_data), axis=0)
