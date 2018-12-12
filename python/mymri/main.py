@@ -2832,10 +2832,10 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
                     cycle_ave = np.mean(all_cycle, axis=0, keepdims=True)
                     sub_count = np.count_nonzero(~np.isnan(all_cycle), axis=0)
                     cycle_stderr = np.divide(np.nanstd(all_cycle, axis=0, keepdims=True), np.sqrt(sub_count))
-                    stats_out = [stats_df]
+                    group_out[harm] = {"stats": stats_out, "cycle_ave": cycle_ave, "cycle_err": cycle_stderr}
                 else:
-                    stats_out.append(stats_df)
-            group_out = {"stats": stats_out, "cycle_ave": cycle_ave, "cycle_err": cycle_stderr, "harmonic": harm}
+                    group_out[harm] = {"stats": stats_out}
+
         else:
             real_mean = np.mean(np.real(all_data), axis=0)
             imag_mean = np.mean(np.imag(all_data), axis=0)
