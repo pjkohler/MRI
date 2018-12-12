@@ -1973,7 +1973,7 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
 
     return all_data, all_vox, cur_label, task_list
 
-def hotelling_t2(dset1=np.zeros((15,3,4), dtype=np.complex), dset2=np.zeros((1, 1), dtype=np.complex), test_type="hot_dep", test_mode=False,report_timing=True):
+def hotelling_t2(dset1=np.zeros((15,3,4), dtype=np.complex), dset2=np.zeros((1, 1), dtype=np.complex), test_type="hot_dep", test_mode=False):
     t = time.time()
     assert test_type != "tcirc", "tcirc not currently supported"
     if not dset1.any():
@@ -2704,8 +2704,12 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
                         print_wrap("analyzing {0} on task {1}, pre-tr: {2}, offset: {3}".format(sub, task, pre_tr, offset), indent=1)
 
                 if task_idx:
-                    out_obj = roiobject(cur_data=sub_data[pre_tr:,:,task_idx], cur_object=None, roi_names=out_label, tr=2.0, stim_freq=10, nharm=5, num_vox=sub_vox, is_time_series=True, offset=offset)
-                    sub_dict = {"sig_complex": out_obj.fft()["sig_complex"], "mean_cycle": out_obj.fft()["mean_cycle"]}
+
+                    #out_obj = roiobject(cur_data=sub_data[pre_tr:,:,task_idx], cur_object=None, roi_names=out_label, tr=2.0, stim_freq=10, nharm=5, num_vox=sub_vox, is_time_series=True, offset=offset)
+                    #sub_dict = {"sig_complex": out_obj.fft()["sig_complex"], "mean_cycle": out_obj.fft()["mean_cycle"]}
+
+                    out_obj = fft_analysis(np.mean(sub_data[pre_tr:, :, task_idx], axis=2))
+                    sub_dict = {"sig_complex": out_obj["sig_complex"], "mean_cycle": out_obj["mean_cycle"]}
 
                     if first_loop:
                         out_spec = cur_spec
@@ -2780,8 +2784,6 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
                 error ellipses broken down by RoI.
     """
 
-    start_time = time.time()
-
     print_wrap("running group {0} analysis ...".format(roi_type))
     group_dictionary = {}
     roi_n = []
@@ -2793,6 +2795,7 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
 
     out_dict = subject_analysis(exp_folder=exp_dir, fs_dir=fs_dir, tasks=tasks, roi_type=roi_type, data_spec=data_spec, in_format=".gii", overwrite=overwrite)
     for t, task in enumerate(out_dict.keys()):
+        start_time = time.time()
         for s, sub_data in enumerate(out_dict[task]["data"]):
             # get complex values
             temp_data = sub_data["sig_complex"]
@@ -2874,9 +2877,9 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
             group_out[np.arange(3, len(harmonic_list) * 4, 4), :] = p_val
 
         group_dictionary[task] = group_out
-    if report_timing:
-        elapsed = time.time() - start_time
-        print_wrap("group analysis complete, took {:02d} seconds".format(round(elapsed)))
+        if report_timing:
+            elapsed = time.time() - start_time
+            print_wrap("group analysis complete, task {0} ".format(task) + "took {:02d} seconds".format(round(elapsed)))
     return group_dictionary
 
 
