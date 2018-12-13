@@ -2676,7 +2676,10 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
 
         if len(surf_files) > 0:
             # set up cache
-            cache_dir = "{0}/__cache__".format(exp_folder)
+            if roi_type == "whole":
+                cache_dir = "{0}/__whole-cache__".format(exp_folder)
+            else:
+                cache_dir = "{0}/__roi-cache__".format(exp_folder)
             memory = Memory(cache_dir, verbose=0, mmap_mode='r')
             roi_get_cached = memory.cache(roi_get_data, ignore=['report_timing'])
             #if overwrite:
