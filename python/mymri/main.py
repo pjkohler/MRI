@@ -1764,7 +1764,6 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
     roi_type = roi_type.lower()
     if roi_type in ["whole", "whole_brain", "wholebrain"]:
         roi_type = "whole"
-        outnames = ["whole-L", "whole-R"]
     else:
         # dictionary of RoIs
         roi_dic = {'wang': ["V1v", "V1d", "V2v", "V2d", "V3v", "V3d", "hV4", "VO1", "VO2", "PHC1", "PHC2",
@@ -2663,7 +2662,7 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
         if 'all' in [x.lower() for x in task_list]:
             task_list = []
             for sub in subjects:
-                task_list += get_data_files("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
+                task_list += get_file_list("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
             task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
@@ -2912,7 +2911,13 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
             group_out[np.arange(2, len(harmonic_list) * 4, 4), :] = t_val
             group_out[np.arange(3, len(harmonic_list) * 4, 4), :] = p_val
 
-        group_dictionary[task] = group_out
+            l_idx = [x for x, name in enumerate(roi_names) if "-L" in name]
+            r_idx = [x for x, name in enumerate(roi_names) if "-R" in name]
+
+            assert len(r_idx) + len(l_idx) == len(roi_names), "left and right hemisphere indices must sum to total indices"
+            assert not bool(set(l_idx) & set(r_idx)), "left and right hemisphere have shared indices"
+
+            group_dictionary[task] = {"left": group_out[:, l_idx], "right": group_out[:, r_idx] }
         if report_timing:
             elapsed = time.time() - start_time
             print_wrap("group analysis complete, task {0} ".format(task) + "took {:02d} seconds".format(round(elapsed)))
