@@ -2679,8 +2679,8 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
             cache_dir = "{0}/__cache__".format(exp_folder)
             memory = Memory(cache_dir, verbose=0, mmap_mode='r')
             roi_get_cached = memory.cache(roi_get_data, ignore=['report_timing'])
-            if overwrite:
-                roi_get_cached.clear(warn=False)
+            #if overwrite:
+            #    roi_get_cached.clear(warn=False)
 
             # run roi_get_data
             sub_data, sub_vox, out_label, task_list = roi_get_cached(surf_files, roi_type=roi_type, fs_dir=fs_dir)
@@ -2821,7 +2821,6 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
 
     print_wrap("running group {0} analysis ...".format(roi_type))
     group_dictionary = {}
-    roi_n = []
     make_plot = False
 
     if any(isinstance(x, int) for x in harmonic_list):
@@ -2883,6 +2882,7 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
                 else:
                     group_out[harm] = {"stats": stats_df}
 
+            group_dictionary[task] = group_out
         else:
             real_mean = np.mean(np.real(all_data), axis=0)
             imag_mean = np.mean(np.imag(all_data), axis=0)
