@@ -2734,11 +2734,6 @@ def group_compare(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
 
     start_time = time.time()
 
-    print_wrap("running group comparison, {0} rois ...".format(roi_type))
-    group_dictionary = {}
-    roi_n = []
-    make_plot = False
-
     if type(exp_dir) is str:
         # make it a list
         exp_dir = [exp_dir, exp_dir]
@@ -2758,6 +2753,11 @@ def group_compare(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
     if any(isinstance(x, int) for x in harmonic_list):
         harmonic_list = [str(x) for x in harmonic_list]
     assert all(float(x) > 0 for x in harmonic_list), "harmonic_list must be a list of named harmonics, not zero-based indices"
+
+    if test_type == "hot_ind":
+        print_wrap("running group comparison, independent samples, {0} rois, {1} harmonic[s] ...".format(roi_type, len(harmonic_list) ))
+    else:
+        print_wrap("running group comparison, paired samples, {0} rois, {1} harmonic[s] ...".format(roi_type, len(harmonic_list)))
 
     comp_data = []
     for e, cur_exp in enumerate(exp_dir):
