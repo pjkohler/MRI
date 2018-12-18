@@ -4,7 +4,10 @@ import json
 import nibabel as nib
 import numpy as np
 import tarfile
-
+try:
+    import tkinter
+except ImportError:    # python 2
+    import Tkinter as tkinter
 
 # *****************************
 # *** HELPER FUNCTIONS
@@ -738,6 +741,140 @@ def bids_organizer(
                         f.write('\n')
     # remove temp folder
     shutil.rmtree(temp_dir)
+
+def makeform(title, fields, defaults=None, width=10):
+    root = tkinter.Tk()
+    root.title(title)
+    entries = []
+    for f, field in enumerate(fields):
+        row = tkinter.Frame(root)
+        lab = tkinter.Label(row, width=width, text=field, anchor='w')
+        ent = tkinter.Entry(row, width=int(width))
+        if defaults:
+            ent.insert(10, defaults[f])
+        row.pack(side=tkinter.TOP, fill=tkinter.X, padx=5, pady=5)
+        lab.pack(side=tkinter.LEFT)
+        ent.pack(side=tkinter.RIGHT, expand=tkinter.YES, fill=tkinter.X)
+        entries.append((field, ent))
+    b1 = tkinter.Button(root, text='Continue?', command=root.quit)
+    b1.pack(side=tkinter.LEFT, padx=5, pady=5)
+    root.mainloop()
+    ent_out = [e[1].get() for e in entries]
+    root.destroy()
+    return ent_out
+
+def bids_lookup(source_dir, lookup_file="/Users/kohler/Desktop/test.json", init_cond='TASKNAME', study=None):
+
+    # how to mount nims directory
+    # sudo mkdir /nimsfs
+    # chmod - R 777 /nimsfs
+    # sudo sshfs - o allow_other, defer_permissions pjkohler@cnic-amnorcia.stanford.edu:/nimsfs /nimsfs
+
+    if not study:
+        study = source_dir.split('/')[-1]
+    session_dirs = ["{0}/{1}".format(source_dir, x) for x in os.listdir(source_dir) if
+                os.path.isdir("{0}/{1}".format(source_dir, x)) and x is not ".DS_Store"]
+
+    if os.path.isfile(lookup_file):
+        json_file = open(lookup_file)
+        json_str = json_file.read()
+        json_dict = json.loads(json_str)
+    else:
+        json_dict = {}
+    for s, session in enumerate(session_dirs):
+        # get list of runs
+        exclude_names = ["3Plane", "asset", "screen_save", "shim", "hos_wb"]
+
+        run_dirs = [ "{0}/{1}".format(session,x) for x in os.listdir(session) if x not in ".DS_Store" ]
+        if len(run_dirs) == 1:
+            session = run_dirs[0]
+            session_dirs[s] = session
+            run_dirs = ["{0}/{1}".format(session, x) for x in os.listdir(session) if x not in ".DS_Store"]
+        run_dirs = [x for x in run_dirs if not any([y in x for y in exclude_names])]
+
+        session_id = session_dirs[s].split(source_dir)[-1]
+
+        # first get the overall session info
+        ses_fields = ['study', 'sub id', 'session no']
+        if session in json_dict:
+            ses_defs = [json_dict[session]["study"], json_dict[session]["sub_id"], json_dict[session]["session"]]
+            assert json_dict[session]["study"] == study, \
+                "study stored in {0} different from current study, you may need to specify the study input parameter".format(lookup_file)
+        else:
+            ses_defs = [study, session_id, "01"]
+
+        ses_out = makeform("session information?", ses_fields, ses_defs)
+
+        run_names = [x.split('/')[-1] for x in run_dirs]
+        sort_idx = list(np.argsort([x.split('_')[0].zfill(2) for x in run_names]))
+        run_names = [run_names[x] for x in sort_idx]
+        run_dirs = [run_dirs[x] for x in sort_idx]
+
+        if session in json_dict:
+            assert len(run_names) == len(json_dict[session]["runs"]), \
+                "number of runs in {0} does not match number of runs in {1}".format(lookup_file, session)
+            run_out = []
+            for run in run_names:
+                run_out.append(json_dict[session]["runs"][run])
+        else:
+            run_count = { x: 0 for x in ["pe1", "fieldmap", "sbref", "task", "inplane", "T2", "T1", "DTI" ] }
+            sbref_idx = []
+            run_defs = []
+            for r, run in enumerate(run_names):
+                if any([ y in run.lower() for y in ["pe1", "unwarp"] ]):
+                    run_count["pe1"] += 1
+                    run_defs.append("run-{:02d}_epi".format(run_count["pe1"]))
+                elif "sbref" in run:
+                    run_count["sbref"] += 1
+                    run_defs.append("task-{:s}_run-{:02d}_sbref".format(init_cond, run_count["sbref"]))
+                    sbref_idx.append(r)
+                elif "inplane" in run:
+                    run_count["inplane"] += 1
+                    run_defs.append("run-{:02d}_inplaneT1".format(run_count["inplane"]))
+                elif "T1" in run:
+                    run_count["T1"] += 1
+                    run_defs.append("run-{:02d}_T1w".format(run_count["T1"]))
+                elif "T2" in run:
+                    run_count["T2"] += 1
+                    run_defs.append("run-{:02d}_T2w".format(run_count["T2"]))
+                elif any([y in run.lower() for y in ["dti", "dwi"]]):
+                    run_count["DTI"] += 1
+                    run_defs.append("acq-96dir_run-{:02d}_dwi".format(run_count["DTI"]))
+                elif any([y in run.lower() for y in ["fmap", "fieldmap"]]):
+                    run_count["fieldmap"] += 1
+                    run_defs.append("run-{:02d}_fieldmap".format(run_count["fieldmap"]))
+                else:
+                    run_defs.append("task-{0}".format(init_cond))
+
+            run_out = makeform("run information?", run_names, run_defs, width=50)
+
+            run_count["pe1"] = 0 # zero and recompute number of pe1s
+            task_count = {}
+            for r, run in enumerate(run_out):
+                if "task" in run and "sbref" not in run:
+                    cur_task = run.split("task-")[-1].split('_')[0]
+                    if cur_task in task_count:
+                        task_count[cur_task] += 1
+                    else:
+                        task_count[cur_task] = 1
+                    run_out[r] = "task-{:s}_run-{:02d}_bold".format(cur_task, task_count[cur_task])
+                elif any([ y in run.lower() for y in ["pe1", "unwarp"] ]):
+                    run_count["pe1"] += 1
+                    run_out[r] = "run-{:02d}_epi".format(run_count["pe1"])
+            if len(task_count.keys()) == 1:
+                init_cond = task_count.keys()[0]
+            for r in sbref_idx:
+                # get task for run nearest to sbref
+                task_runs = [ x for x in run_out[r+1:] if "task" in x.lower() ]
+                new_task = task_runs[0].split("task-")[-1].split('_')[0]
+                old_task = run_out[r].split("task-")[-1].split('_')[0]
+                run_out[r] = run_out[r].replace(old_task, new_task)
+        # give user a change to check the assigned names
+        run_out = makeform("scan information?", run_names, run_out, width=50)
+
+        json_dict[session_dirs[s]] = {"study": ses_out[0], "sub_id": ses_out[1], "session": ses_out[2], "runs": dict(zip(run_names, run_out))}
+    with open(lookup_file, 'w') as outfile:
+        json.dump(json_dict, outfile)
 
 def hard_create(bids_dir,experiment,subjects="all",fs_dir="main"):
     """Function creates hardlinks from freesurfer directory to the experiment folder
