@@ -5,7 +5,9 @@ import numpy as np
 import pandas as pd
 import scipy as scp
 import nibabel as nib
-import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib import pyplot as plt
 import scipy.stats as stats
 from itertools import combinations
 import rpy2.robjects as ro
@@ -2717,13 +2719,14 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
                         first_loop = False
                     else:
                         assert out_names == out_label, "roi names do not match across subjects"
-                        assert {**out_spec} == {**cur_spec}, "specs do not match across subjects"
+                        assert out_spec == cur_spec, "specs do not match across subjects"
 
                     if task in out_dict:
                         out_dict[task]["data"].append(sub_dict)
                         out_dict[task]["num_vox"].append(sub_vox)
                     else:
-                        out_dict[task] = {"data": [sub_dict], "num_vox": [sub_vox], "roi_names": out_names, **out_spec}
+                        out_dict[task] = {"data": [sub_dict], "num_vox": [sub_vox], "roi_names": out_names}
+                        out_dict[task].update(out_spec)
 
     if report_timing:
         elapsed = time.time() - start_t
