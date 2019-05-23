@@ -431,19 +431,34 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
             mux = int(meta_file[meta_file.index('mux')+3])
         else:
             mux = int(1)
-        n_echoes = descrip[descrip.index('acq=')+4:].split(';')[0]
-        n_echoes = int(n_echoes.split(',')[1].replace(']',''))
-        # echo_time and echo spacing in nifti header is expressed in ms
-        echo_spacing = float(descrip[descrip.index('ec=')+3:].split(';')[0]) / 1000
-        echo_time = float(descrip[descrip.index('te=')+3:].split(';')[0]) / 1000
-        flip_angle = float(descrip[descrip.index('fa=')+3:].split(';')[0])
+        try:
+            n_echoes = descrip[descrip.index('acq=')+4:].split(';')[0]
+            n_echoes = int(n_echoes.split(',')[1].replace(']',''))
+        except:
+            n_echoes = 'unknown'
+        try:
+            # echo_time and echo spacing in nifti header is expressed in ms
+            echo_spacing = float(descrip[descrip.index('ec=')+3:].split(';')[0]) / 1000
+        except:
+            echo_spacing = 'unknown'
+        try:
+            echo_time = float(descrip[descrip.index('te=')+3:].split(';')[0]) / 1000
+        except:
+            echo_time = 'unknown'
+        try:
+            flip_angle = float(descrip[descrip.index('fa=')+3:].split(';')[0])
+        except:
+            flip_angle = 'unknown'
         # note, mux factor has already been incorporated in slice count
         n_slices = int(nib.load(meta_file).header['dim'][3])
         tr = float(nib.load(meta_file).header['pixdim'][4])
-        phase_dir = bin(nib.load(meta_file).header['dim_info'])
-        phase_dir = int(phase_dir[int(len(phase_dir)/2) : int(len(phase_dir)/2+2)],2)
-        # make phase_dir zero-indexed
-        phase_dir = phase_dir-1
+        try:
+            phase_dir = bin(nib.load(meta_file).header['dim_info'])
+            phase_dir = int(phase_dir[int(len(phase_dir)/2) : int(len(phase_dir)/2+2)],2)
+            # make phase_dir zero-indexed
+            phase_dir = phase_dir - 1
+        except:
+            phase_dir = 'unknown'
         if 'pe' in descrip:
             pe_polar = descrip[descrip.index('pe=')+3:].split(';')[0]
             if '0' in pe_polar:
@@ -468,8 +483,11 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
         phase_sign = '-'
 
     meta_out = {}
-    total_time = (n_echoes-1)*echo_spacing
-    # fill in metadata
+    if n_echoes is not "unknown" and echo_spacing is not "unknown":
+        total_time = (n_echoes-1)*echo_spacing
+    else:
+        total_time = "unknown"
+        # fill in metadata
     meta_out['SliceTiming'] = get_slice_timing(n_slices, tr, mux = mux) 
     meta_out['FlipAngle'] = flip_angle
     if (scan_type in ['task', 'sbref']):
@@ -488,8 +506,11 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
         meta_out = {} # clear meta data, dti only needs some of these
     else:
         raise ValueError("get_meta: unknown type %s." % scan_type)
-    # meta data for all types 
-    meta_out['PhaseEncodingDirection'] = ['i','j','k'][phase_dir] + phase_sign   
+    # meta data for all types
+    if phase_dir is not "unknown" and phase_sign is not "unknown":
+        meta_out['PhaseEncodingDirection'] = ['i','j','k'][phase_dir] + phase_sign
+    else:
+        meta_out['PhaseEncodingDirection'] = "unknown"
     meta_out['EffectiveEchoSpacing'] = echo_spacing
     meta_out['EchoTime'] = echo_time
     meta_out['TotalReadoutTime'] = total_time
@@ -518,30 +539,43 @@ def get_slice_timing(nslices, tr, mux = 1, order = 'ascending'):
     sorted_slicetimes = [slicetimes[i[0]][0] for i in sort_index]
     return sorted_slicetimes
 
-def get_subj_path(nims_file, data_dir, id_correction_dict=None):
+def get_subj_path(nims_file, data_dir, lookup=None):
     """
     Takes a path to a nims_file and returns a subject id
     If a dictionary specifying id corrections is provided
     (in the form of a json file with exam numbers as keys and
     ids as values), the function will return the corrected id number
     """
-    exam_number = nims_file.split('_')[-1]
-    # correct session if provided
-    if id_correction_dict:
-        sub_session = id_correction_dict.get(exam_number,'skip')
+
+    if lookup:
+        for key in lookup.keys():
+            cur_file = None
+            if nims_file == key:
+                cur_dict = lookup[key]
+            else:
+                sub_file = get_subdir(nims_file)[0]
+                if sub_file == key:
+                    cur_dict = lookup[key]
+        sub_id = cur_dict.get("sub_id", 'skip')
+        if sub_id is 'skip':
+            subj_dir = None
+        else:
+            session = cur_dict.get("session", '01')
+            subj_dir = os.path.join(data_dir, 'sub-' + sub_id, 'ses-' + session)
     else:
+        # if no lookup, must have a meta json file, nims style (for now)
         meta_json = glob.glob(os.path.join(nims_file,'*','*1.json'))[0]
         meta_file = json.load(open(meta_json,'r'))
         sub_session = str(meta_file['patient_id'].split('@')[0])
-    if 'skip' in sub_session:
-        subj_dir = None
-    else:
-        sub_id = sub_session.split('_')[0]
-        session = '1'
-        if '_' in sub_session:
-            session = sub_session.split('_')[1]
-        session = session.zfill(2)
-        subj_dir = os.path.join(data_dir, 'sub-'+sub_id, 'ses-'+session)
+        if 'skip' in sub_session:
+            subj_dir = None
+        else:
+            sub_id = sub_session.split('_')[0]
+            session = '1'
+            if '_' in sub_session:
+                session = sub_session.split('_')[1]
+            session = session.zfill(2)
+            subj_dir = os.path.join(data_dir, 'sub-'+sub_id, 'ses-'+session)
     return subj_dir
 
 def mkdir(path):
@@ -570,7 +604,7 @@ def rsync(input, output):
 # *****************************
 # *** Main BIDS function
 # *****************************
-def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None, update_metadata=False):
+def bids_subj(orig_dir, temp_dir, out_dir, deface=True, lookup=None, update_metadata=False):
     """
     Takes 
         orig_dir (the path to the subject's data directory in the original format, on nims or elsewhere) 
@@ -600,7 +634,7 @@ def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None, upd
         fmap_temp = mkdir(os.path.join(temp_dir,'fmap'))
         dti_temp = mkdir(os.path.join(temp_dir,'dwi'))
 
-        if run_correction is None:
+        if lookup is None:
             task_origs = sorted(glob.glob(os.path.join(orig_dir,'*task*')))[::-1]
             task_origs = [x for x in task_origs if 'sbref' not in x and 'pe' not in x]
             anat_origs = sorted(glob.glob(os.path.join(orig_dir,'*anat*')))[::-1]
@@ -609,7 +643,19 @@ def bids_subj(orig_dir, temp_dir, out_dir, deface=True, run_correction=None, upd
             sbref_origs = sorted(glob.glob(os.path.join(orig_dir,'*sbref*')))[::-1]
             dti_origs = sorted(glob.glob(os.path.join(orig_dir,'*dti*')))[::-1]
         else:
-            run_filtered = {k:v for k,v in run_correction.items() if orig_dir.split("_")[-1] in k}
+            cur_dict = None
+            for key in lookup.keys():
+                if orig_dir == key:
+                    cur_dict = lookup[key]
+                    break
+                else:
+                    sub_dir = get_subdir(orig_dir)[0]
+                    if sub_dir == key:
+                        orig_dir = sub_dir
+                        cur_dict = lookup[key]
+                        break
+
+            run_filtered = {k: v for k, v in cur_dict["runs"].items() if "skip" not in v}
             task_origs = {os.path.join(orig_dir,k):v for k,v in run_filtered.items() if 'task' in v and 'sbref' not in v and 'pe' not in v}
             anat_origs = {os.path.join(orig_dir,k):v for k,v in run_filtered.items() if 'T1' in v or 'T2' in v}
             pe_origs = {os.path.join(orig_dir,k):v for k,v in run_filtered.items() if 'epi' in v}
@@ -650,9 +696,8 @@ def get_subdir(a_dir):
 # *****************************
 
 def bids_organizer(
-    study_dir,
-    id_correction=None, 
-    run_correction=None, 
+    study_dir=None,
+    lookup_file=None,
     record=None, 
     study_id=None,
     bids_dir='/Volumes/svndl/RAW_DATA/MRI_RAW', 
@@ -679,15 +724,45 @@ def bids_organizer(
     if not os.path.isdir(bids_dir):
         print('BIDS directory %s does not exist!' % bids_dir)
         return
-    
+
+    # check for lookup file
+    if lookup_file is not None and os.path.isfile(lookup_file):
+        print('Using lookup json file: %s' % lookup_file)
+        lookup = json.load(open(lookup_file, 'r'))
+
+        # replace '//' in study dirs
+        key_list = list(lookup.keys())
+        for old_key in key_list:
+            new_key = old_key
+            new_key = new_key.replace('//', '/')
+            lookup[new_key] = lookup.pop(old_key)
+
+        # determine study dir
+        common_dir = '/'.join(os.path.commonprefix(list(lookup.keys())).split('/')[0:-1])
+        if study_dir:
+            study_dir = study_dir.rstrip('\\')
+            # replace '//' in study dirs
+            key_list = list(lookup.keys())
+            for old_key in key_list:
+                new_key = old_key
+                new_key = new_key.replace(common_dir, study_dir)
+                lookup[new_key] = lookup.pop(old_key)
+        else:
+            study_dir = common_dir
+    else:
+        lookup_file = None
+        assert(study_dir), "no study dir defined, no lookup file, cannot run"
+
     #study name
     if study_id is None:
         study_id = study_dir.split('/')[-1]
     # output directory
     out_dir = os.path.join(bids_dir,study_id)
     mkdir(out_dir)
+
     # directories to BIDSify
-    nims_dirs = sorted(get_subdir(study_dir),reverse=True)
+    nims_dirs = sorted(get_subdir(study_dir),reverse=False)
+
     if run_all is False:
         nims_dirs = [nims_dirs[0]]
     # get temporary directory to save bids in
@@ -695,20 +770,6 @@ def bids_organizer(
     if os.path.isdir(temp_dir):
         shutil.rmtree(temp_dir)
     mkdir(temp_dir)
-    
-    # set id_correction dict if provided
-    if id_correction is not None and os.path.isfile(id_correction): 
-        print('Using ID correction json file: %s' % id_correction)
-        id_correction = json.load(open(id_correction,'r'))
-    else:
-        print('No ID correction')
-
-    # set run_correction dict if provided
-    if run_correction is not None and os.path.isfile(run_correction): 
-        print('Using run correction json file: %s' % run_correction)
-        run_correction = json.load(open(run_correction,'r'))
-    else:
-        print('No run name correction')
 
     # record file
     if record is None: 
@@ -723,12 +784,12 @@ def bids_organizer(
 
     # bidsify all subjects in path
     for nims_file in nims_dirs:
-        temp_subj  = get_subj_path(nims_file, temp_dir, id_correction)
+        temp_subj  = get_subj_path(nims_file, temp_dir, lookup)
         print("*******************************************************************")
         if temp_subj == None:
             print("Skipping %s" % nims_file)
             continue
-        success = bids_subj(nims_file, temp_subj, out_dir, deface, run_correction, update_metadata)
+        success = bids_subj(nims_file, temp_subj, out_dir, deface, lookup, update_metadata)
         # move files
         if success: 
             err = rsync(temp_dir, out_dir)
@@ -783,14 +844,14 @@ def bids_lookup(source_dir, lookup_file="/Users/kohler/Desktop/test.json", init_
         json_dict = {}
     for s, session in enumerate(session_dirs):
         # get list of runs
-        exclude_names = ["3Plane", "asset", "screen_save", "shim", "hos_wb"]
+        exclude_names = ["ssfse_loc", "3plane", "asset", "screen_save", "shim", "hos_wb"]
 
         run_dirs = [ "{0}/{1}".format(session,x) for x in os.listdir(session) if x not in ".DS_Store" ]
         if len(run_dirs) == 1:
             session = run_dirs[0]
             session_dirs[s] = session
             run_dirs = ["{0}/{1}".format(session, x) for x in os.listdir(session) if x not in ".DS_Store"]
-        run_dirs = [x for x in run_dirs if not any([y in x for y in exclude_names])]
+        run_dirs = [x for x in run_dirs if not any([y in x.lower() for y in exclude_names])]
 
         session_id = session_dirs[s].split(source_dir)[-1]
 
@@ -862,19 +923,19 @@ def bids_lookup(source_dir, lookup_file="/Users/kohler/Desktop/test.json", init_
                     run_count["pe1"] += 1
                     run_out[r] = "run-{:02d}_epi".format(run_count["pe1"])
             if len(task_count.keys()) == 1:
-                init_cond = task_count.keys()[0]
+                init_cond =list(task_count.keys())[0]
             for r in sbref_idx:
                 # get task for run nearest to sbref
                 task_runs = [ x for x in run_out[r+1:] if "task" in x.lower() ]
                 new_task = task_runs[0].split("task-")[-1].split('_')[0]
                 old_task = run_out[r].split("task-")[-1].split('_')[0]
                 run_out[r] = run_out[r].replace(old_task, new_task)
-        # give user a change to check the assigned names
+            # give user a change to check the assigned names
         run_out = makeform("scan information?", run_names, run_out, width=50)
 
         json_dict[session_dirs[s]] = {"study": ses_out[0], "sub_id": ses_out[1], "session": ses_out[2], "runs": dict(zip(run_names, run_out))}
-    with open(lookup_file, 'w') as outfile:
-        json.dump(json_dict, outfile)
+        with open(lookup_file, 'w') as outfile:
+            json.dump(json_dict, outfile)
 
 def hard_create(bids_dir,experiment,subjects="all",fs_dir="main"):
     """Function creates hardlinks from freesurfer directory to the experiment folder
