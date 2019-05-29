@@ -1634,8 +1634,6 @@ def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
     # subtract the mean to zero the mean_cycle
     mean_cycle = mean_cycle - np.tile(np.mean(mean_cycle, axis=0, keepdims=True), (cycle_len, 1))
 
-    if np.isnan(mean_cycle).any() == True:
-        print("mean cycle should not contain NaNs")
     assert np.isnan(mean_cycle).any() == False, "mean cycle should not contain NaNs"
 
     sig_z = np.empty((nharm, nS))
@@ -1683,7 +1681,7 @@ def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
     return fft_dict
 
 def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detrend=False,
-                 use_regressors='standard', TR=2.0, roilabel=None, fs_dir=None, report_timing=False):
+                 use_regressors='standard', TR=2.0, roilabel=None, fs_dir=None, report_timing=False, min_vox=50):
     """
     region of interest surface data
     
@@ -1790,11 +1788,12 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
             eccen_file[1] = eccen_file[0].replace("lh", "rh")
             # define roilabel based on ring centers
             ring_incr = 0.25
-            ring_size = .5
+            ring_size = 0.5
             ring_max = 6
-            ring_min = 1
-            ring_centers = np.arange(ring_min, ring_max, ring_incr)  # list of ring extents
-            ring_extents = [(x - ring_size / 2, x + ring_size / 2) for x in ring_centers]
+            ring_min = .25
+            num_steps = ((ring_max - ring_min) / ring_incr) + 1
+            ring_centers = np.linspace(ring_min, ring_max, num_steps)  # list of ring extents
+            ring_extents = [(int((x - ring_size / 2) * 10) / 10, int((x + ring_size / 2) * 10) / 10) for x in ring_centers]
             roi_label = [y + "_{:0.2f}".format(x) for y in roi_dic['benson'] for x in ring_centers]
         else:
             # NB: NOT CLEAR HOW THIS WOULD WORK?
@@ -1904,17 +1903,21 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
         else:
             # uses surface module of nilearn to import data in .gii format
             roi_data = nl_surf.load_surf_data(roi_file[h])
+            assert run_data.shape[0] == roi_data.shape[0], "Data and ROI have different number of surface vertices"
             # Benson should just use ROIs
             if roi_type == "benson":
                 roi_data = roi_data[:, 2]
-                roi_n = roi_data.shape[0]
+                run_t = np.array([np.mean(run_data[roi_data == x], axis=0) for x in np.unique(roi_data) if x > 0])
+                vox_count = np.reshape(np.array([np.count_nonzero(roi_data == x) for x in np.unique(roi_data) if x > 0]), (-1, 1))
             # wang+benson-specific code begins here
             elif roi_type == "wang+benson":
                 eccen_data = nl_surf.load_surf_data(eccen_file[h])
                 # select eccen data from Benson
                 eccen_data = eccen_data[:, 1]
                 assert eccen_data.shape[0] == roi_data.shape[0], "ROIs and Template Eccen have different number of surface vertices"
-                ring_data = np.zeros_like(roi_data)
+                ring_data = []
+                run_t = []
+                vox_count = []
                 for r, evc in enumerate(["V1", "V2", "V3"]):
                     # find early visual cortex rois in wang rois
                     roi_set = [i + 1 for i, s in enumerate(roi_dic['wang']) if evc+'d' in s or evc+'v' in s]
@@ -1923,22 +1926,38 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
                     for e, extent in enumerate(ring_extents):
                         # get indexes that are populated in both i.e. between lower and higher extent
                         eccen_idx = np.all(np.vstack(((eccen_data > extent[0]), (eccen_data < extent[1]), evc_idx)), axis=0)
-                        idx_val = e + (r * len(ring_centers))
-                        ring_data[eccen_idx] = idx_val + 1
-                # now set ring values as new roi values
-                roi_data = ring_data
-            assert run_data.shape[0] == roi_data.shape[0], "Data and ROI have different number of surface vertices"
-            run_t = np.array([np.mean(run_data[roi_data == x], axis=0) for x in np.unique(roi_data) if x > 0])
-            vox_count = np.reshape(np.array([np.count_nonzero(roi_data == x) for x in np.unique(roi_data) if x > 0]), (-1, 1))
+                        if np.any(eccen_idx):
+                            run_t.append(np.mean(run_data[eccen_idx], axis=0))
+                            vox_count.append(np.count_nonzero(eccen_idx))
+                        else:
+                            print_wrap("no indices for this sub-ROI: {0}-{1}{2}".format(hemi, evc, extent), indent=2)
+                            run_t.append(np.full(run_data.shape[1:], np.nan))
+                            vox_count.append(0)
+                        ring_data.append(eccen_idx)
 
-            if roi_type == "wang":
+                run_t = np.asarray(run_t)
+                vox_count = np.asarray(vox_count)
+                if ring_size < ring_incr * 2:
+                    # check for uniqueness
+                    ring_data  = np.asarray(ring_data)
+                    num_unique = [ np.count_nonzero(
+                        np.sum(ring_data[:, ring_data[x, :]][np.arange(ring_data.shape[0]) != x], axis=0) == 0) for x in range(ring_data.shape[0]) ]
+                    for u, uval in enumerate(num_unique):
+                        if uval == 0:
+                            print_wrap("no unique samples for this sub-ROI: {0}:{1}".format(hemi, roi_label[u]), indent=2)
+                        elif uval < 10:
+                            print_wrap("only {0} unique samples for this sub-ROI: {1}:{2}".format(num_unique[u], hemi, roi_label[u]), indent=2)
+
+            elif roi_type == "wang":
+                run_t = np.array([np.mean(run_data[roi_data == x], axis=0) for x in np.unique(roi_data) if x > 0])
+                vox_count = np.reshape(np.array([np.count_nonzero(roi_data == x) for x in np.unique(roi_data) if x > 0]), (-1))
                 # combine dorsal and ventral
                 for r, evc in enumerate(["V1", "V2", "V3"]):
                     # find early visual cortex rois in wang rois
                     roi_set = [i + 1 for i, s in enumerate(roi_dic['wang']) if evc + 'd' in s or evc + 'v' in s]
                     evc_idx = np.any(np.array([roi_data == x for x in roi_set]), axis=0)
                     run_t = np.vstack((run_t, np.mean(run_data[evc_idx], axis=0, keepdims=True)))
-                    vox_count =  np.vstack((vox_count, np.count_nonzero(evc_idx)))
+                    vox_count =  np.hstack((vox_count, np.count_nonzero(evc_idx)))
 
             run_data = run_t
             cur_label = roi_label
@@ -1955,11 +1974,12 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
 
             if roi_type not in "whole":
                 # only do bilateral data for ROIs
-                bl_data = np.divide(left_data + right_data, 2)
+                bl_data = np.nanmean(np.stack((left_data, right_data),axis=3), axis=3)
                 bl_vox = [sum(x) for x in zip(left_vox, right_vox)]
-
                 all_data = np.vstack((left_data,right_data, bl_data))
-                all_vox = np.vstack((left_vox, right_vox, bl_vox))
+                all_vox = np.hstack((left_vox, right_vox, bl_vox))
+                reject_rois = np.tile((all_vox <= min_vox).reshape(-1, 1, 1), (1, all_data.shape[1], all_data.shape[2]))
+                all_data[reject_rois] = np.nan
                 cur_label = left_label + right_label + ["{0}-BL".format(label) for label in cur_label]
             else:
                 # combine left and right
@@ -2225,17 +2245,18 @@ def vector_projection(complex_in=np.zeros((15,3,4), dtype="complex128"), test_fi
     project_p = project_p / 2  # one-tailed, so divide by p-vals by two
 
     # and standard error
-    project_err = np.divide(np.nanstd(project_amp, axis=0), np.sqrt(sum(is_nan==0)))
+    project_err = np.divide(np.nanstd(project_amp, axis=0), np.sqrt(np.sum(is_nan==0, axis=0)))
 
     # fill nans back in
-    project_amp = np.ma.filled(project_amp)
+    project_amp = np.ma.filled(project_amp, np.nan)
     project_real = np.ma.filled(c_out[0, :], np.nan)
     project_imag = np.ma.filled(c_out[1, :], np.nan)
 
     out_mean = np.ma.mean(c_out, 1, keepdims=False)
-    assert np.all(
+    if not np.all(
         np.asarray([np.isclose(np.ma.max(c_mean, axis=1)[x], out_mean[x, :], atol=1e-09) for x in [0, 1]])
-    ), "mean of projected should be the same as mean of unprojected"
+    ):
+        print("mean of projected should be the same as mean of unprojected")
 
     if test_fig:
         for idx in np.ndindex(c_data.shape[2:]):
@@ -2684,10 +2705,11 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
                 cache_dir = "{0}/__roi-cache__".format(exp_folder)
             memory = Memory(cache_dir, verbose=0, mmap_mode='r')
             roi_get_cached = memory.cache(roi_get_data, ignore=['report_timing'])
-            #if overwrite:
-            #    roi_get_cached.clear(warn=False)
+            if overwrite:
+                roi_get_cached.clear(warn=False)
 
             # run roi_get_data
+            #sub_data, sub_vox, out_label, task_list = roi_get_data(surf_files, roi_type=roi_type, fs_dir=fs_dir)
             sub_data, sub_vox, out_label, task_list = roi_get_cached(surf_files, roi_type=roi_type, fs_dir=fs_dir)
             for t, task in enumerate(tasks.keys()):
                 # dictionary takes precedence
@@ -2710,7 +2732,17 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
                     #sub_dict = {"sig_complex": out_obj.fft()["sig_complex"], "mean_cycle": out_obj.fft()["mean_cycle"]}
 
                     max_harm = max([ int(float(x)) for x in harmonic_list ])
-                    out_obj = fft_analysis(np.mean(sub_data[pre_tr:, :, task_idx], axis=2), nharm=max_harm, offset=offset)
+                    nan_rois = np.sum(np.all(np.isnan(sub_data), axis=2), axis=0) == sub_data.shape[0]
+                    if np.any(nan_rois):
+                        out_obj = fft_analysis(np.nanmean(sub_data[pre_tr:, np.argwhere(~nan_rois), task_idx], axis=2), nharm=max_harm, offset=offset)
+                        temp_complex = np.full( (out_obj["sig_complex"].shape[0],sub_data.shape[1]) , np.nan, dtype="complex128")
+                        temp_complex[:, ~nan_rois] = out_obj["sig_complex"]
+                        out_obj["sig_complex"] = temp_complex
+                        temp_cycle = np.full( (out_obj["mean_cycle"].shape[0],sub_data.shape[1]) , np.nan)
+                        temp_cycle[:, ~nan_rois] = out_obj["mean_cycle"]
+                        out_obj["mean_cycle"] = temp_cycle
+                    else:
+                        out_obj = fft_analysis(np.nanmean(sub_data[pre_tr:, :, task_idx], axis=2), nharm=max_harm, offset=offset)
                     sub_dict = {"sig_complex": out_obj["sig_complex"], "mean_cycle": out_obj["mean_cycle"]}
 
                     if first_loop:
@@ -2724,8 +2756,9 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
                     if task in out_dict:
                         out_dict[task]["data"].append(sub_dict)
                         out_dict[task]["num_vox"].append(sub_vox)
+                        out_dict[task]["sub_id"].append(sub)
                     else:
-                        out_dict[task] = {"data": [sub_dict], "num_vox": [sub_vox], "roi_names": out_names}
+                        out_dict[task] = {"data": [sub_dict], "num_vox": [sub_vox], "roi_names": out_names, "sub_id": [sub]}
                         out_dict[task].update(out_spec)
 
     if report_timing:
@@ -2771,20 +2804,26 @@ def group_compare(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
             if s == 0:
                 all_data = np.zeros((len(comp_dict[task_list[e]]["data"]),temp_data.shape[0],temp_data.shape[1]),dtype="complex128")
                 if e == 0:
-                    roi_names = comp_dict[task_list[e]]["roi_names"]
+                    all_names = comp_dict[task_list[e]]["roi_names"]
+                    keep_rois = np.zeros((len(all_names),2))
                 else:
-                    assert roi_names == comp_dict[task_list[e]]["roi_names"], "rois not matched across tasks"
+                    assert all_names == comp_dict[task_list[e]]["roi_names"], "rois not matched across tasks"
             all_data[s, :, :] = temp_data
-
         # only plot harmonic of interest
         harmonic_idx = [int(float(x) - 1) for x in harmonic_list]
         all_data = all_data[:, harmonic_idx, :]
+        num_subs = np.sum(~np.isnan(all_data[:, 0, :]), axis=0)
+        min_sub = 3
+        keep_rois[num_subs >= min_sub, e] = True
         comp_data.append(all_data)
+    keep_rois = np.all(keep_rois, axis=1)
+    comp_data = [x[:, :, np.nonzero(keep_rois)[0]] for x in comp_data]
+    roi_names = [i for i, j in zip(all_names, keep_rois) if j]
     hot_t, hot_p, hot_crit = hotelling_t2(dset1=comp_data[0], dset2=comp_data[1], test_type=test_type)
 
     for h, harm in enumerate(harmonic_list):
         stats_df = pd.DataFrame(index=roi_names, columns=["hotT2"])
-        stats_df.at[roi_names, 'hotT2'] = [(hot_t[h, x], hot_p[h, x]) for x in range(all_data.shape[2])]
+        stats_df.at[roi_names, 'hotT2'] = [(hot_t[h, x], hot_p[h, x]) for x in range(comp_data[0].shape[2])]
         if h == 0:
             comp_out = {}
         comp_out[harm] = {"stats": stats_df}
@@ -2842,14 +2881,23 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
             if s == 0:
                 all_data = np.zeros((len(out_dict[task]["data"]),temp_data.shape[0],temp_data.shape[1]),dtype="complex128")
                 if t == 0:
-                    roi_names = out_dict[task]["roi_names"]
+                    all_names = out_dict[task]["roi_names"]
+                    all_size = np.array(out_dict[task]["num_vox"])
+                    sub_names = out_dict[task]["sub_id"]
                 else:
-                    assert roi_names == out_dict[task]["roi_names"], "rois not matched across tasks"
+                    assert all_names == out_dict[task]["roi_names"], "rois not matched across tasks"
+                    assert np.all(all_size[np.nonzero(np.in1d(sub_names, out_dict[task]["sub_id"]))[0],:]
+                                  == out_dict[task]["num_vox"]), "roi size not matched across tasks"
             all_data[s, :, :] = temp_data
 
         # only plot harmonic of interest
         harmonic_idx = [int(float(x) - 1) for x in harmonic_list]
         all_data = all_data[:, harmonic_idx, :]
+        num_subs = np.sum(~np.isnan(all_data[:,0,:]),axis=0)
+        min_sub = 3
+        all_data = all_data[:,:,num_subs >= min_sub]
+        roi_names = [all_names[int(x)] for x in np.argwhere(num_subs >= min_sub)]
+        roi_size = all_size[:, num_subs >= min_sub]
 
         if roi_type not in ["whole"]:
             hot_t, hot_p, hot_crit = hotelling_t2(all_data)
@@ -2857,12 +2905,14 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
             project_amp, project_err, project_t, project_p, project_real, project_imag = vector_projection(all_data)
 
             amp_out, phase_out, snr_out = fit_error_ellipse(all_data, ellipse_type, make_plot, return_rad)
-            assert np.all(amp_out[1,] >= 0), "warning: ROI {0} with task {1}: lower error bar is smaller than zero".format(roi, task)
-            assert np.all(amp_out[2,] >= 0), "warning: ROI {0} with task {1}: upper error bar is smaller than zero".format(roi, task)
+            if not np.all(amp_out[1,] >= 0):
+                print('dude')
+            assert np.all(amp_out[1,] >= 0), "warning: {0}: lower error bar is smaller than zero".format(task)
+            assert np.all(amp_out[2,] >= 0), "warning: {0}: upper error bar is smaller than zero".format(task)
 
             for h, harm in enumerate(harmonic_list):
                 stats_df = pd.DataFrame(index=roi_names,columns=['amp_mu', 'ph_mu', 'z_snr', 'el_err_amp', 'el_err_ph', "proj_err",
-                                                 "hotT2", "ttest_1s", "project_sub_amps"])
+                                                 "hotT2", "ttest_1s", "project_sub_amps", "sub_complex"])
                 stats_df.at[roi_names, 'amp_mu'] = amp_out[0, h, :]
                 stats_df.at[roi_names, 'ph_mu'] = phase_out[0, h, :]
                 stats_df.at[roi_names, 'z_snr'] = snr_out[h, :]
@@ -2871,27 +2921,30 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
                 stats_df.at[roi_names, 'proj_err'] = project_err[h, :]
                 stats_df.at[roi_names, 'hotT2'] = [(hot_t[h, x], hot_p[h, x]) for x in range(all_data.shape[2])]
                 stats_df.at[roi_names, 'ttest_1s'] = [(project_t[h, x], project_p[h, x]) for x in range(all_data.shape[2])]
-                stats_df.at[roi_names, 'project_sub_amps'] = project_amp[h, :]
-
+                stats_df.at[roi_names, 'project_sub_amps'] = [project_amp[:, h, x] for x in range(all_data.shape[2])]
+                stats_df.at[roi_names, 'sub_complex'] = [all_data[:, h, x] for x in range(all_data.shape[2])]
                 # compute cycle average and standard error, only once
                 if h == 0:
-
                     all_cycle = np.array([x["mean_cycle"] for x in out_dict[task]["data"]])
-                    cycle_ave = np.mean(all_cycle, axis=0, keepdims=True)
+                    all_cycle = all_cycle[:, :, num_subs >= min_sub]
+                    cycle_ave = np.nanmean(all_cycle, axis=0, keepdims=True)
                     sub_count = np.count_nonzero(~np.isnan(all_cycle), axis=0)
                     cycle_stderr = np.divide(np.nanstd(all_cycle, axis=0, keepdims=True), np.sqrt(sub_count))
+
+                    assert all_data.shape[0::2] == all_cycle.shape[0::2], "cycle data and harmonic data have different indices"
+
                     cycle_df = pd.DataFrame(index=roi_names, columns=['ave', 'stderr'])
                     cycle_df.at[roi_names, 'ave'] = [(cycle_ave[:, :, x]) for x in range(all_data.shape[2])]
                     cycle_df.at[roi_names, 'stderr'] = [(cycle_stderr[:, :, x]) for x in range(all_data.shape[2])]
                     group_out = {}
-                    group_out[harm] = {"stats": stats_df, "cycle": cycle_df}
+                    group_out[harm] = {"stats": stats_df, "cycle": cycle_df, "roi_size": roi_size, "num_subs": num_subs[num_subs >= min_sub]}
                 else:
                     group_out[harm] = {"stats": stats_df}
 
             group_dictionary[task] = group_out
         else:
-            real_mean = np.mean(np.real(all_data), axis=0)
-            imag_mean = np.mean(np.imag(all_data), axis=0)
+            real_mean = np.nanmean(np.real(all_data), axis=0)
+            imag_mean = np.nanmean(np.imag(all_data), axis=0)
             amp_out = np.abs(real_mean + 1j * imag_mean)
             phase_out = np.angle(real_mean + 1j * imag_mean, not return_rad)
 
