@@ -471,7 +471,11 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
     else:
         meta_in = json.load(open(meta_file,'r'))
         mux = meta_in['num_bands']
-        n_echoes = meta_in['acquisition_matrix_y']
+        try:
+        	# note: second dim should be y-dimension, but double-check!
+        	n_echoes = meta_in['acquisition_matrix'][1]
+        except:
+        	n_echoes = meta_in['acquisition_matrix_y']
         echo_spacing = meta_in['effective_echo_spacing']
         echo_time =  meta_in['te']
         flip_angle = meta_in['flip_angle']
@@ -479,7 +483,10 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
         n_slices = meta_in['num_slices'] * mux
         tr = meta_in['tr']
         # note, phase_dir is already zero-indexed
-        phase_dir = meta_in['phase_encode']
+        try:
+        	phase_dir = meta_in['phase_encode_direction']
+        except:
+        	phase_dir = meta_in['phase_encode']
         phase_sign = '-'
 
     meta_out = {}
