@@ -43,16 +43,41 @@ def fs_dir_check(fs_dir, subject):
                      .format(fs_dir, subject, suffix))
     return suffix
 
+def suma_make_fs_spec(subjects, fs_dir=None, suffix="")
+    if not fs_dir:
+        assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
+        fs_dir = os.getenv("SUBJECTS_DIR")
+        old_subject_dir = fs_dir
+    else:
+        old_subject_dir = os.getenv("SUBJECTS_DIR")
+        os.environ["SUBJECTS_DIR"] = fs_dir
+
+    if type(subjects) is str:
+        # make it a list
+        sub_list = [subjects]
+    else:
+        sub_list = subjects
+
+    for sub in sub_list:
+        # check the voxel size is even and res is 1x1x1
+        vox_hdr = nib.load("{0}/{1}{2}/mri/orig.mgz".format(fs_dir, sub, suffix)).header
+        vox_shape = vox_hdr.get_data_shape()
+        assert len([shape for shape in vox_shape if shape % 2 != 0]) == 0, 'Voxel Shape incorrect {0}'.format(vox_shape)
+        vox_res = vox_hdr.get_zooms()
+        assert vox_res == (1.0, 1.0, 1.0), 'Voxel Resolution incorrect: {0}'.format(vox_res)
+        sub_fs = "{0}/{1}{2}".format(fs_dir, sub, suffix)
+        shell_cmd("cd {0}; @SUMA_Make_Spec_FS -NIFTI -sid {1}{2}".format(sub_fs, sub, suffix))
 
 def copy_surf_files(fs_dir, tmp_dir, subject, copy="both", suffix="", spec_prefix=""):
     sub_fs = "{0}/{1}{2}".format(fs_dir, subject, suffix)
     assert os.path.isdir(sub_fs), 'no freesurfer dir found'
     sub_suma = "{0}/SUMA".format(sub_fs)
     sub_surf = "{0}/surf".format(sub_fs)
+    suma_format = ""
     if copy.lower() == "both":
         copy = ["suma","fs"]
     if "suma" in copy:
-        assert os.path.isdir(sub_suma), 'no SUMA dir found'
+        assert os.path.isdir(sub_suma), "no SUMA dir found"
         suma_list = glob.glob("{0}/*h.smoothwm.gii".format(sub_suma)) + glob.glob("{0}/*h.pial.gii".format(sub_suma))
         suma_format = "gii"
         if len(suma_list) == 0:
@@ -1195,7 +1220,6 @@ def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefi
     if keep_temp is not True:
         # remove temporary directory
         shutil.rmtree(tmp_dir)
-
 
 def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, out_dir="standard", forcex=False,
                   separate_out=False, keep_temp=False, skipclust=False, intertype="NearestNode",
