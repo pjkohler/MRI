@@ -552,7 +552,7 @@ def vol_reg(in_files, ref_file='last', slow=False, keep_temp=False):
         shutil.rmtree(tmp_dir)
 
 
-def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_tr=0, total_tr=0, scale=True, detrend=True,
+def scale_detrend(target_dir, subjects=None, sub_prefix="sub-", tasks=None, pre_tr=0, total_tr=0, scale=True, detrend=True,
                 data_spec = {}, bids_regressors="standard", in_format = ".nii.gz", overwrite=False, keep_temp=False):
     """
     Function for third stage of preprocessing: Scaling and Detrending.
@@ -565,8 +565,8 @@ def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_
 
     # figure out subjects
     if not subjects:
-        subjects = [x for x in os.listdir(exp_folder) if
-                    x.find(sub_prefix) == 0 and os.path.isdir(os.path.join(exp_folder, x))]
+        subjects = [x for x in os.listdir(target_dir) if
+                    x.find(sub_prefix) == 0 and os.path.isdir(os.path.join(target_dir, x))]
     # figure out tasks
     if tasks is None:
         tasks = dict.fromkeys(["no task"], [])
@@ -580,7 +580,8 @@ def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_
         if 'all' in [x.lower() for x in task_list]:
             task_list = []
             for sub in subjects:
-                task_list += get_file_list("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
+                temp_list, temp_spec = get_file_list("{0}/{1}".format(target_dir, sub), type=in_format, spec=data_spec)
+                task_list += temp_list
             task_list = [re.findall('task-\w+_', x)[0][5:-1] for x in task_list]
             task_list = list(set(task_list))
         # make_dict and assign pre_tr and offset to dict
@@ -591,13 +592,13 @@ def scale_detrend(exp_folder, subjects=None, sub_prefix="sub-", tasks=None, pre_
 
             # produce list of files
             if task is "no task":
-                in_files, out_spec = get_file_list("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
+                in_files, out_spec = get_file_list("{0}/{1}".format(target_dir, sub), type=in_format, spec=data_spec)
                 if len(in_files) == 0:
                     continue
                 print_wrap("Preprocessing {0} on all tasks".format(sub))
             else:
                 data_spec["task"] = task
-                in_files, out_spec = get_file_list("{0}/{1}".format(exp_folder, sub), type=in_format, spec=data_spec)
+                in_files, out_spec = get_file_list("{0}/{1}".format(target_dir, sub), type=in_format, spec=data_spec)
                 if len(in_files) == 0:
                     continue
                 print_wrap("Preprocessing {0} on task {1}".format(sub, task))
@@ -2546,7 +2547,7 @@ def fit_error_ellipse(complex_in=np.zeros((15,100000), dtype="complex128"), elli
     return amp_out, phase_out, snr_out
 
 
-def subset_rois(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang", fs_dir=None):
+def roi_subsets(in_file, roi_selection=["evc"], out_file=None, roi_labels="wang", fs_dir=None):
     if not fs_dir:
         assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
         fs_dir = os.getenv("SUBJECTS_DIR")
