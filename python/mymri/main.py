@@ -43,7 +43,7 @@ def fs_dir_check(fs_dir, subject):
                      .format(fs_dir, subject, suffix))
     return suffix
 
-def suma_make_fs_spec(subjects, fs_dir=None, suffix="")
+def suma_make_fs_spec(subjects, fs_dir=None, suffix=""):
     if not fs_dir:
         assert os.getenv("SUBJECTS_DIR"), "fs_dir not provided and 'SUBJECTS_DIR' environment variable not set"
         fs_dir = os.getenv("SUBJECTS_DIR")
