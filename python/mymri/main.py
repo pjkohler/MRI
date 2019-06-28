@@ -344,31 +344,31 @@ def get_file_list(target_folder, type=".gii", spec=mri_spec()):
         not_spec = []
         # data_spec is a class specifying bids format
         if spec["space"] in ['suma_std141', 'sumastd141']:
-            spec_str = ["bold_space-sumastd141"]
+            spec_str = ["space-sumastd141"]
         elif spec["space"] in ['suma_native', 'sumanative']:
-            spec_str = ["bold_space-sumanative"]
+            spec_str = ["space-sumanative"]
         elif spec["space"] in ['fs_native', 'fsnative']:
-            spec_str = ["bold_space-fsnative"]
+            spec_str = ["space-fsnative"]
         elif spec["space"] in "T1w":
-            spec_str = ["bold_space-T1w"]
+            spec_str = ["space-T1w"]
             # if T1w and BIDS, file name must also contain 'preproc'
-            spec_str.append("preproc")
+            spec_str.append("desc-preproc")
         else:
             print_wrap('unknown space {0} provided'.format(spec["space"]), indent=3)
             print_wrap('... using fsnative', indent=3)
-            spec_str = ["bold_space-fsnative"]
+            spec_str = ["space-fsnative"]
         if spec["scaling"]:
-            spec_str.append("-sc")
+            spec_str.append("+scld")
         else:
-            not_spec.append("-sc")
+            not_spec.append("+scld")
         if spec["detrending"]:
-            spec_str.append("-dt")
+            spec_str.append("+detr")
         else:
-            not_spec.append("-dt")
+            not_spec.append("+detr")
         if spec["smoothing"] > 0:
-            spec_str.append("{0}fwhm".format(spec["smoothing"]))
+            spec_str.append("+{0}fwhm".format(spec["smoothing"]))
         else:
-            not_spec.append("fwhm")
+            not_spec.append("+fwhm")
         if spec["task"]:
             spec_str.append("task-{0}".format(spec["task"]))
 
@@ -637,9 +637,9 @@ def scale_detrend(target_dir, subjects=None, sub_prefix="sub-", tasks=None, pre_
                 cur_dir, cur_name, cur_suffix = mri_parts(cur_file)
                 final_suffix = ''
                 if scale:
-                    final_suffix = "{0}-sc".format(final_suffix)
+                    final_suffix = "{0}+scld".format(final_suffix)
                 if detrend:
-                    final_suffix = "{0}-dt".format(final_suffix)
+                    final_suffix = "{0}+detr".format(final_suffix)
                 final_file = "{0}/{1}{2}.{3}".format(cur_dir,cur_name,final_suffix,cur_suffix)
                 if os.path.isfile(final_file):
                     if overwrite:
@@ -664,18 +664,18 @@ def scale_detrend(target_dir, subjects=None, sub_prefix="sub-", tasks=None, pre_
                 ## CONCATENATE
                 # subtract one from total tr to account for zero-indexing
                 shell_cmd("3dTcat -prefix {0}+orig {1}/{0}.{2}''[{3}..{4}]''"
-                          .format(cur_name, cur_dir, cur_suffix, pre_tr, cur_total_tr-1))
+                          .format(cur_name, cur_dir, cur_suffix, pre_tr, cur_total_tr-1), do_print=True)
                 ## SCALE
                 if scale:
                     # compute mean
                     shell_cmd("3dTstat -prefix mean_{0}{1}+orig {0}{1}+orig".format(cur_name, new_suffix))
-                    shell_cmd("3dcalc -float -a {0}{1}+orig -b mean_{0}{1}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {0}{1}-sc+orig"
+                    shell_cmd("3dcalc -float -a {0}{1}+orig -b mean_{0}{1}+orig -expr 'min(200, a/b*100)*step(a)*step(b)' -prefix {0}{1}+scld+orig"
                         .format(cur_name, new_suffix))
-                    new_suffix = "{0}-sc".format(new_suffix)
+                    new_suffix = "{0}+scld".format(new_suffix)
                 # DETREND
                 if detrend:
                     # find confounds
-                    bids_confounds = glob.glob(cur_file.split('bold')[0] + '*confounds*.tsv')
+                    bids_confounds = glob.glob(cur_file.split('space')[0] + '*confounds*.tsv')
 
                     if len(bids_confounds) > 0:
                         # load in bids data
@@ -692,8 +692,8 @@ def scale_detrend(target_dir, subjects=None, sub_prefix="sub-", tasks=None, pre_
 
                             # select columns to use as nuisance regressors
                             if "standard" in bids_regressors:
-                                df = df[['CSF', 'WhiteMatter', 'GlobalSignal', 'FramewiseDisplacement', 'X', 'Y', 'Z', 'RotX',
-                                         'RotY', 'RotZ']]
+                                df = df[['csf', 'white_matter', 'global_signal', 'framewise_displacement', 'trans_x', 'trans_y', 'trans_z', 'rot_x',
+                                         'rot_y', 'rot_z']]
                             elif "all" not in bids_regressors:
                                 df = df[bids_regressors]
                             # fill in missing nuisance values with mean for that variable
@@ -716,8 +716,8 @@ def scale_detrend(target_dir, subjects=None, sub_prefix="sub-", tasks=None, pre_
                         # not so great way to find afni motparams for now
                         afni_confounds = [x for x in os.path.os.listdir(cur_dir) if
                                          x.endswith(".1D") and "motparam" in x and cur_name in x]
-                        assert len(afni_confounds) > 0, "no bids confounds and no matching motparam 1D file found for data file {0}{1}".format(cur_name, cur_suffix)
-                        assert len(afni_confounds) == 1, "more than one matching motparam 1D file found for data file {0}{1}".format(
+                        assert len(afni_confounds) > 0, "no bids confounds and no matching motparam 1D file found for data file {0}.{1}".format(cur_name, cur_suffix)
+                        assert len(afni_confounds) == 1, "more than one matching motparam 1D file found for data file {0}.{1}".format(
                             cur_name, cur_suffix)
 
                         confounds_file = afni_confounds[0]
@@ -725,9 +725,9 @@ def scale_detrend(target_dir, subjects=None, sub_prefix="sub-", tasks=None, pre_
                         if cur_file == in_files[0]:
                             print_wrap("Detrending, using AFNI confound regressors in file {0}".format(confounds_file), indent=2)
 
-                    shell_cmd("3dDetrend -prefix {0}{1}-dt+orig -polort 2 -vector {2} {0}{1}+orig"
+                    shell_cmd("3dDetrend -prefix {0}{1}+detr+orig -polort 2 -vector {2} {0}{1}+orig"
                           .format(cur_name, new_suffix, confounds_file))
-                    new_suffix = "{0}-dt".format(new_suffix)
+                    new_suffix = "{0}+detr".format(new_suffix)
 
                     # MOVE FILES BACK
                     assert final_file == "{3}/{0}{1}.{2}".format(cur_name, new_suffix, cur_suffix, cur_dir), "something's wrong, final file does not match suffix"
@@ -1062,7 +1062,7 @@ def surf_smooth(experiment_dir, fs_dir=None, subjects=None, sub_prefix="sub-",
                 processing = cur_name.split("_")[-1]
                 hemi = processing.split(".")[-1]
                 processing = processing.split(".")[0]
-                new_name = cur_name.replace(processing, processing + "-{0}fwhm".format(blur_size))
+                new_name = cur_name.replace(processing, processing + "+{0}fwhm".format(blur_size))
             else:
                 if any([x in cur_name for x in ["lh", ".L"]]):
                     hemi = "L"
@@ -1071,7 +1071,7 @@ def surf_smooth(experiment_dir, fs_dir=None, subjects=None, sub_prefix="sub-",
                 else:
                     print_wrap("hemisphere could not be determined for file {0}".format(cur_file))
                     return
-                new_name = '{0}-{1}fwhm'.format(cur_name, blur_size)
+                new_name = '{0}+{1}fwhm'.format(cur_name, blur_size)
 
             if out_dir:
                 cur_dir = out_dir

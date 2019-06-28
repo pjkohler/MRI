@@ -479,8 +479,8 @@ def get_meta(meta_file, scan_type, taskname=None, intended_list=None):
         echo_spacing = meta_in['effective_echo_spacing']
         echo_time =  meta_in['te']
         flip_angle = meta_in['flip_angle']
-        # note, mux factor has not been incorporated in slice count
-        n_slices = meta_in['num_slices'] * mux
+        # note, mux factor has now been incorporated in slice count in json file, so we no longer need to multiply by mux factor:
+        n_slices = meta_in['num_slices']
         tr = meta_in['tr']
         # note, phase_dir is already zero-indexed
         try:
