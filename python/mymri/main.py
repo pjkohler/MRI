@@ -270,7 +270,7 @@ class roiobject:
     def fft(self):
         assert self.is_time_series == True, "not time series, cannot run fft"
         return fft_analysis(self.mean(),
-                            tr=self.tr,
+                            self.tr,
                             stimfreq=self.stim_freq,
                             nharm=self.num_harmonics,
                             offset=self.offset)
@@ -294,7 +294,7 @@ def mri_frame(cur_data=np.zeros((120, 1)), is_time_series=True, roi_name="whole"
     if not all(num_vox):
         num_vox = np.ones((cur_data.shape[0], 1))
     mean_data = np.nanmean(cur_data, axis=2)
-    fft_data = fft_analysis(mean_data.reshape(num_t, -1), tr=tr, stimfreq=stim_freq, nharm=nharm, offset=offset)
+    fft_data = fft_analysis(mean_data.reshape(num_t, -1), tr, stimfreq=stim_freq, nharm=nharm, offset=offset)
     for x, i in enumerate(idx):
         if not lean:
             for r in range(cur_data.shape[2]):
@@ -371,19 +371,27 @@ def get_file_list(target_folder, type=".gii", spec=mri_spec()):
             not_spec.append("+fwhm")
         if spec["task"]:
             spec_str.append("task-{0}".format(spec["task"]))
+        if spec["session"] not in 'all':
+            run_session = spec["session"]
 
-        # data folders for sessions or just current folder
-        data_folders = ["{0}/{1}/func".format(target_folder, s) for s in os.listdir(target_folder) if 'ses' in s]
-        if data_folders:
-            if spec["session"] not in 'all':
-                data_folders = ["{0}/ses-{1}/func".format(target_folder, str(spec["session"]).zfill(2))]
     else:
         if isinstance(spec, str):
             spec = [spec]
         spec_str = spec
-        data_folders = [target_folder]
+        not_spec = []
+        run_session = 0 # run all sessions
 
     assert type in [".nii.gz",".nii",".niml.dset",".gii.gz",".gii"], "unknown data type {0}!".format(type)
+
+    # data folders for sessions or just current folder
+    data_folders = ["{0}/{1}/func".format(target_folder, s) for s in os.listdir(target_folder) if 'ses' in s]
+    if data_folders:
+        if run_session > 0:
+            data_folders = ["{0}/ses-{1}/func".format(target_folder, str(spec["session"]).zfill(2))]
+    else:
+        data_folders = [ "{0}/func".format(target_folder) ] 
+        if not data_folders:
+            data_folders = [target_folder]
 
     for cur_dir in data_folders:
         file_list += [cur_dir + "/" + x for x in os.path.os.listdir(cur_dir) if
@@ -470,7 +478,7 @@ def slice_timing(in_files, ref_file='last', tr_dur=0, pre_tr=0, total_tr=0, slic
     if tr_dur is 0:
         # TR not given, so compute
         tr_dur = shell_cmd("3dinfo -tr -short {0}".format(ref_file))
-        tr_dur = tr_dur.rstrip("\n")
+        tr_dur = np.float(tr_dur.rstrip("\n"))
     if total_tr is 0:
         # include all TRs, so get max subbrick value
         total_tr = shell_cmd("3dinfo -nvi -short {0}".format(ref_file))
@@ -840,7 +848,6 @@ def vol_to_surf(experiment_dir, fs_dir=None, subjects=None, sub_prefix="sub-",
             print_wrap("Running subject {0}, native:".format(sub))
 
         in_files, out_spec = get_file_list("{0}/{1}".format(experiment_dir, sub), type=in_format, spec=data_spec)
-
         output_list = []
 
         # make temporary, local folder
@@ -1054,6 +1061,9 @@ def surf_smooth(experiment_dir, fs_dir=None, subjects=None, sub_prefix="sub-",
 
         in_files, out_spec = get_file_list("{0}/{1}".format(experiment_dir, sub), spec=data_spec, type=in_format)
 
+        # skip files that have already been smoothed
+        in_files = [x for x in in_files if "fwhm" not in x ]
+
         suma_copied = False
         for cur_file in in_files:
             cur_dir, cur_name, cur_suffix = mri_parts(cur_file)
@@ -1130,8 +1140,9 @@ def surf_smooth(experiment_dir, fs_dir=None, subjects=None, sub_prefix="sub-",
 
         os.chdir(cur_dir)
         if keep_temp is not True:
-            # remove temporary directory
-            shutil.rmtree(tmp_dir)
+            if suma_copied:
+                # remove temporary directory
+                shutil.rmtree(tmp_dir)
 
 
 def surf_to_vol(subject, in_files, map_func='ave', wm_mod=0.0, gm_mod=0.0, prefix=None, index='voxels', steps=10,
@@ -1617,7 +1628,7 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, out_dir=
     os.environ["SUBJECTS_DIR"] = old_subject_dir
 
 
-def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
+def fft_analysis(signal, tr_dur, stimfreq=10, nharm=5, offset=0):
     """
     offset=0, positive values means the first data frame was shifted forwards relative to stimulus
               negative values means the first data frame was shifted backwards relative to stimulus
@@ -1627,8 +1638,8 @@ def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
     nS = signal.shape[1]
     assert nT < 1000, "unlikely number of TRs, time should be first dimension"
     assert any([nT > 0, nS > 0]), "input must be two dimensional"
-    sample_rate = 1 / tr
-    run_time = tr * nT
+    sample_rate = 1 / tr_dur
+    run_time = tr_dur * nT
 
     complex_vals = np.fft.rfft(signal, axis=0)
     complex_vals = np.divide(complex_vals[1:, :], nT)
@@ -1706,7 +1717,7 @@ def fft_analysis(signal, tr=2.0, stimfreq=10, nharm=5, offset=0):
     return fft_dict
 
 def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detrend=False,
-                 use_regressors='standard', TR=2.0, roilabel=None, fs_dir=None, report_timing=False, min_vox=50):
+                 use_regressors='standard', tr_dur=0, roilabel=None, fs_dir=None, report_timing=False, min_vox=50):
     """
     region of interest surface data
     
@@ -1723,8 +1734,7 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
             if True
     sub : boolean, default False
             The subject, if not clearly defined in the file name
-    TR : float, default 2.0
-            Repetition Time
+    tr_dur : float, default is to compute from data
     roilabel : Roi label, default None
             Region of Interest label if required
     fs_dir : directory, default os.environ["SUBJECTS_DIR"]
@@ -1736,7 +1746,7 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
             outdata contains a list of objects (RoIs) with attributes:
                 - data : The data relevant to this RoI
                 - roi_name : The RoI name
-                - tr : Repetition Time
+                - tr_dur : Repetition Time
                 - stim_freq : Stimulus frequency
                 - num_harmonics : Number of harmonics
                 - num_vox : number of voxels
@@ -1780,11 +1790,17 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
             return None
         assert s_2 in surf_files,  "File {0} does not have a matching file from the other hemisphere".format(s)
 
-    task_list = [re.search('_task-(.+)_run', x)[1] for x in l_files]
-    assert task_list == [re.search('_task-(.+)_run', x)[1] for x in r_files]
+    task_list = sorted([re.search('_task-(.+)_run', x)[1] for x in l_files])
+    task_list_2 = sorted([re.search('_task-(.+)_run', x)[1] for x in r_files])
+    assert task_list == task_list_2, "list {0} does not match list {1}".format(task_list, task_list_2)
     data_files = [None, None]
     data_files[0] = sorted(l_files)
     data_files[1] = sorted(r_files)
+
+    if tr_dur is 0:
+        # TR not given, so compute
+        tr_dur = shell_cmd("3dinfo -tr -short {0}".format(l_files[0]))
+        tr_dur = np.float(tr_dur.rstrip("\n"))
 
     roi_type = roi_type.lower()
     if roi_type in ["whole", "whole_brain", "wholebrain"]:
@@ -1814,9 +1830,9 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
             # define roilabel based on ring centers
             ring_incr = 0.25
             ring_size = 0.5
-            ring_max = 6
+            ring_max = 8
             ring_min = .25
-            num_steps = ((ring_max - ring_min) / ring_incr) + 1
+            num_steps = np.int(((ring_max - ring_min) / ring_incr) + 1)
             ring_centers = np.linspace(ring_min, ring_max, num_steps)  # list of ring extents
             ring_extents = [(int((x - ring_size / 2) * 10) / 10, int((x + ring_size / 2) * 10) / 10) for x in ring_centers]
             roi_label = [y + "_{:0.2f}".format(x) for y in roi_dic['benson'] for x in ring_centers]
@@ -1904,9 +1920,8 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
                             df[col] = df[col].fillna(np.mean(df[col]))
                     if r == 0:
                         print_wrap("using {0} confound regressors".format(len(df.columns)), indent=3)
-
                     new_data = nl_signal.clean(cur_data, detrend=True, standardize=False, confounds=df.values,
-                                               low_pass=None, high_pass=None, t_r=TR, ensure_finite=False)
+                                               low_pass=None, high_pass=None, t_r=tr_dur, ensure_finite=False)
                     cur_data = np.transpose(new_data)
                 except:
                     print_wrap("Data file: {0}, detrending failure".format(run_file.split('/')[-1]))
@@ -2017,7 +2032,7 @@ def roi_get_data(surf_files, roi_type="wang", sub=False, do_scale=False, do_detr
         elapsed = time.time() - t
         print_wrap("roi_get_data complete, took {:3.2f} seconds".format(elapsed), indent=1)
 
-    return all_data, all_vox, cur_label, task_list
+    return all_data, all_vox, cur_label, task_list, tr_dur
 
 def hotelling_t2(dset1=np.zeros((15,3,4), dtype=np.complex), dset2=np.zeros((1, 1), dtype=np.complex), test_type="hot_dep", demo_mode=False):
     t = time.time()
@@ -2735,7 +2750,7 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
 
             # run roi_get_data
             #sub_data, sub_vox, out_label, task_list = roi_get_data(surf_files, roi_type=roi_type, fs_dir=fs_dir)
-            sub_data, sub_vox, out_label, task_list = roi_get_cached(surf_files, roi_type=roi_type, fs_dir=fs_dir)
+            sub_data, sub_vox, out_label, task_list, tr_dur = roi_get_cached(surf_files, roi_type=roi_type, fs_dir=fs_dir)
             for t, task in enumerate(tasks.keys()):
                 # dictionary takes precedence
                 if "offset" in tasks[task].keys():
@@ -2759,16 +2774,19 @@ def subject_analysis(exp_folder, fs_dir=None, subjects='All', roi_type='wang+ben
                     max_harm = max([ int(float(x)) for x in harmonic_list ])
                     nan_rois = np.sum(np.all(np.isnan(sub_data), axis=2), axis=0) == sub_data.shape[0]
                     if np.any(nan_rois):
-                        out_obj = fft_analysis(np.nanmean(sub_data[pre_tr:, np.argwhere(~nan_rois), task_idx], axis=2), nharm=max_harm, offset=offset)
+                        out_obj = fft_analysis(np.nanmean(sub_data[pre_tr:, np.argwhere(~nan_rois), task_idx], axis=2), tr_dur, nharm=max_harm, offset=offset)
                         temp_complex = np.full( (out_obj["sig_complex"].shape[0],sub_data.shape[1]) , np.nan, dtype="complex128")
                         temp_complex[:, ~nan_rois] = out_obj["sig_complex"]
                         out_obj["sig_complex"] = temp_complex
                         temp_cycle = np.full( (out_obj["mean_cycle"].shape[0],sub_data.shape[1]) , np.nan)
                         temp_cycle[:, ~nan_rois] = out_obj["mean_cycle"]
                         out_obj["mean_cycle"] = temp_cycle
+                        temp_snr = np.full( (out_obj["sig_snr"].shape[0],sub_data.shape[1]) , np.nan)
+                        temp_snr[:, ~nan_rois] = out_obj["sig_snr"]
+                        out_obj["sig_snr"] = temp_snr
                     else:
-                        out_obj = fft_analysis(np.nanmean(sub_data[pre_tr:, :, task_idx], axis=2), nharm=max_harm, offset=offset)
-                    sub_dict = {"sig_complex": out_obj["sig_complex"], "mean_cycle": out_obj["mean_cycle"]}
+                        out_obj = fft_analysis(np.nanmean(sub_data[pre_tr:, :, task_idx], axis=2), tr_dur, nharm=max_harm, offset=offset)
+                    sub_dict = {"sig_complex": out_obj["sig_complex"], "sig_snr": out_obj["sig_snr"], "mean_cycle": out_obj["mean_cycle"]}
 
                     if first_loop:
                         out_spec = cur_spec
@@ -2903,8 +2921,10 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
         for s, sub_data in enumerate(out_dict[task]["data"]):
             # get complex values
             temp_data = sub_data["sig_complex"]
+            temp_snr = sub_data["sig_snr"]
             if s == 0:
                 all_data = np.zeros((len(out_dict[task]["data"]),temp_data.shape[0],temp_data.shape[1]),dtype="complex128")
+                all_snr = np.zeros((len(out_dict[task]["data"]),temp_snr.shape[0],temp_snr.shape[1]))
                 if t == 0:
                     all_names = out_dict[task]["roi_names"]
                     all_size = np.array(out_dict[task]["num_vox"])
@@ -2914,13 +2934,16 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
                     assert np.all(all_size[np.nonzero(np.in1d(sub_names, out_dict[task]["sub_id"]))[0],:]
                                   == out_dict[task]["num_vox"]), "roi size not matched across tasks"
             all_data[s, :, :] = temp_data
+            all_snr[s, :, :] = temp_snr
 
         # only plot harmonic of interest
         harmonic_idx = [int(float(x) - 1) for x in harmonic_list]
         all_data = all_data[:, harmonic_idx, :]
+        all_snr = all_snr[:, harmonic_idx, :]
         num_subs = np.sum(~np.isnan(all_data[:,0,:]),axis=0)
         min_sub = 3
         all_data = all_data[:,:,num_subs >= min_sub]
+        all_snr = all_snr[:,:,num_subs >= min_sub]
         roi_names = [all_names[int(x)] for x in np.argwhere(num_subs >= min_sub)]
         roi_size = all_size[:, num_subs >= min_sub]
 
@@ -2937,7 +2960,7 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
 
             for h, harm in enumerate(harmonic_list):
                 stats_df = pd.DataFrame(index=roi_names,columns=['amp_mu', 'ph_mu', 'z_snr', 'el_err_amp', 'el_err_ph', "proj_err",
-                                                 "hotT2", "ttest_1s", "project_sub_amps", "sub_complex"])
+                                                 "hotT2", "ttest_1s", "project_sub_amps", "sig_snr", "sub_complex"])
                 stats_df.at[roi_names, 'amp_mu'] = amp_out[0, h, :]
                 stats_df.at[roi_names, 'ph_mu'] = phase_out[0, h, :]
                 stats_df.at[roi_names, 'z_snr'] = snr_out[h, :]
@@ -2947,6 +2970,7 @@ def group_analyze(exp_dir, tasks, fs_dir=None, subjects='All', data_spec={}, roi
                 stats_df.at[roi_names, 'hotT2'] = [(hot_t[h, x], hot_p[h, x]) for x in range(all_data.shape[2])]
                 stats_df.at[roi_names, 'ttest_1s'] = [(project_t[h, x], project_p[h, x]) for x in range(all_data.shape[2])]
                 stats_df.at[roi_names, 'project_sub_amps'] = [project_amp[:, h, x] for x in range(all_data.shape[2])]
+                stats_df.at[roi_names, 'sig_snr'] = [all_snr[:, h, x] for x in range(all_snr.shape[2])]
                 stats_df.at[roi_names, 'sub_complex'] = [all_data[:, h, x] for x in range(all_data.shape[2])]
                 # compute cycle average and standard error, only once
                 if h == 0:
