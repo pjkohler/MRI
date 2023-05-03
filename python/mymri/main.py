@@ -1371,10 +1371,10 @@ def roi_templates(subjects, roi_type="all", atlasdir=None, fs_dir=None, out_dir=
                 # Invert the right hemisphere - currently removed as believed not needed
                 # shell_cmd("xhemireg --s {0}{1}".format(sub,suffix), fs_dir,do_print=True)
                 # register lh to fsaverage sym
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh".format(sub, suffix), fs_dir)
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --no-annot".format(sub, suffix), fs_dir)
                 # mirror-reverse subject rh and register to lh fsaverage_sym
                 # though the right hemisphere is not explicitly listed below, it is implied by --lh --xhemi
-                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi".format(sub, suffix), fs_dir)
+                shell_cmd("surfreg --s {0}{1} --t fsaverage_sym --lh --xhemi --no-annot".format(sub, suffix), fs_dir)
             else:
                 print_wrap("skipping fsaverage_sym registration", indent=2)
 
